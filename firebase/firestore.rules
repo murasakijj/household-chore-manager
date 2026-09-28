@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 全データアクセスは Vercel Functions(firebase-admin)経由のみ(decisions.md)。
+    // クライアントからの直接読み書きはすべて拒否する。
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
