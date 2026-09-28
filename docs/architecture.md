@@ -34,7 +34,7 @@ GitHub Actions（毎時）/ Vercel Cron（毎日）→ /api/cron/daily-summary
 - `api/_lib/auth.ts`: recipe-buddy からほぼ移植。`requireAuth(header) → {uid, email}`。
 - `api/_lib/context.ts`: `resolveContext(user)` → `{householdId, memberId, household}`。`userMemberships/{uid}` を引き、無ければ初回セットアップ（decisions.md「家庭の自動作成」）をトランザクションで行う。**householdId はここ以外から取らない。**
 - `api/_lib/http.ts`: `sendJson` / `readJsonBody`（recipe-buddy から移植）。
-- エラー応答: `{ error: "<code>", details?: ... }`。400 `invalid_body` / 401 / 403 / 404 `not_found` / 405 / 409 / 500 `internal_error` / 502 AI系。
+- エラー応答: `{ error: "<code>", details?: ... }`。400 `invalid_body` / 401 / 403 / 404 `not_found` / 405 / 409 / 500 `internal_error` / 502 AI系（`rate_limited` / `overloaded` / `upstream_error` / `invalid_ai_output`）。AIプロバイダ・Web Pushの環境変数未設定は `ai_not_configured` / `push_not_configured`(500。設定ミスとして扱い、キー自体はログに出さない)。
 - ログにメモ本文・メール以外の個人情報を出さない。
 
 ## ドメイン（純粋関数・`api/_lib/domain/`）

@@ -1,0 +1,24 @@
+name: Daily summary cron
+
+# 朝のまとめ通知ジョブ(decisions.md「Push通知方式」)。
+# Vercel Hobby の Cron は1日1回しか起動できず、利用者ごとの通知時刻(dailySummaryTime)に
+# 対応できないため、GitHub Actions で毎時 /api/cron/daily-summary を叩く。
+# サーバー側は各家庭・各メンバーの現在時刻としきい値・送信済み判定を見て、
+# 実際に送るかどうかを毎回自分で判断する(二重送信はしない)。
+# vercel.json の Vercel Cron(毎日1回)は保険として引き続き有効。
+
+on:
+  schedule:
+    # 毎時7分に起動(UTC)。ちょうど :00 に集中させない(サーバー側の負荷分散)。
+    - cron: "7 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/daily-summary
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/daily-summary"
