@@ -9,6 +9,7 @@ import {
   disablePush,
   enablePush,
   getPushStatus,
+  resyncPushSubscription,
   type PushSupportStatus,
 } from "../lib/push";
 import PageHeader from "../components/PageHeader";
@@ -16,6 +17,8 @@ import Skeleton from "../components/Skeleton";
 
 const PUSH_STATUS_LABEL: Record<PushSupportStatus, string> = {
   unsupported: "この端末・ブラウザは通知に対応していません。",
+  sw_not_registered:
+    "このブラウザでは利用できません(開発環境ではService Workerが未登録のため)。",
   ios_needs_home_screen:
     "iPhoneで通知を受け取るには、このアプリをホーム画面に追加してから開き直してください(共有ボタン→「ホーム画面に追加」)。",
   denied:
@@ -71,6 +74,13 @@ export default function Settings() {
 
   useEffect(() => {
     refreshPushStatus();
+    // 画面表示のたびに、購読中ならサーバーへ冪等に登録し直す(レビュー指摘 #6)。
+    // サーバー側の記録が何らかの理由で欠けていても、設定画面を開くだけで復旧する。
+    void getPushStatus().then((status) => {
+      if (status === "subscribed") {
+        void resyncPushSubscription().catch(() => undefined);
+      }
+    });
   }, [refreshPushStatus]);
 
   const handleEnablePush = async () => {
@@ -111,8 +121,18 @@ export default function Settings() {
     setPushBusy(true);
     try {
       const result = await sendTestPush();
-      if (result.sent > 0) {
+      if (result.sent > 0 && result.failed === 0) {
         showToast({ message: "テスト通知を送信しました。" });
+      } else if (result.sent > 0 && result.failed > 0) {
+        showToast({
+          message: `テスト通知を送信しました(${result.failed}件の端末には届きませんでした)。`,
+          tone: "warning",
+        });
+      } else if (result.failed > 0) {
+        showToast({
+          message: `テスト通知を送信できませんでした(${result.failed}件失敗)。`,
+          tone: "warning",
+        });
       } else {
         showToast({
           message: "送信先の購読がありません。先に通知を有効にしてください。",
@@ -140,6 +160,10 @@ export default function Settings() {
     e.preventDefault();
     if (!isValidTimezone(timezone)) {
       setError("タイムゾーンの指定が正しくありません。");
+      return;
+    }
+    if (dailySummaryTime > "23:00") {
+      setError("通知時刻は23:00までで指定してください。");
       return;
     }
     setError(null);
@@ -200,10 +224,15 @@ export default function Settings() {
           通知時刻
           <input
             type="time"
+            min="00:00"
+            max="23:00"
             value={dailySummaryTime}
             onChange={(e) => setDailySummaryTime(e.target.value)}
             disabled={!dailySummaryEnabled}
           />
+          <span className="form-hint">
+            実際の送信は指定時刻の後、最初の毎時の定時実行(毎時7分頃)に届きます。
+          </span>
         </label>
         <label className="form-checkbox">
           <input

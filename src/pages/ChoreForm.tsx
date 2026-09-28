@@ -121,9 +121,14 @@ export default function ChoreForm() {
 
   /**
    * AIで候補を出す(decisions.md「家庭登録アシスト」)。結果はフォームへ反映するだけで、
-   * 保存は利用者が行う(自動保存しない)。予告/猶予はAIの推奨間隔に対して
-   * §7.6 の式でサーバーが計算した値をそのまま採用し、以後は自動追従しない
-   * (利用者が保存前に調整できるよう touched 扱いにする)。
+   * 保存は利用者が行う(自動保存しない)。
+   *
+   * - 新規登録時は、予告/猶予をまだ手で変更していなければ(!touched)AIの推奨間隔に
+   *   対する §7.6 の値を入れるが touched フラグは立てない。以後も推奨間隔を変えれば
+   *   自動追従を続けられるようにする(レビュー指摘 #9)。既に touched(利用者が手で
+   *   変更済み)の項目は上書きしない。編集画面では読み込み時に touched=true済みのため
+   *   自然に上書きされない。
+   * - 場所・カテゴリ・説明は、利用者が既に入力済みの値を上書きしない。
    */
   const handleAiSuggest = async () => {
     if (!name.trim()) return;
@@ -132,13 +137,13 @@ export default function ChoreForm() {
     try {
       const suggestion = await aiChoreSuggestion(name.trim());
       setIntervalDays(suggestion.intervalDays);
-      setWarningDays(suggestion.warningDays);
-      setGraceDays(suggestion.graceDays);
-      setWarningTouched(true);
-      setGraceTouched(true);
-      if (suggestion.areaId) setAreaId(suggestion.areaId);
-      if (suggestion.categoryId) setCategoryId(suggestion.categoryId);
-      if (suggestion.description) setDescription(suggestion.description);
+      if (!warningTouched) setWarningDays(suggestion.warningDays);
+      if (!graceTouched) setGraceDays(suggestion.graceDays);
+      if (suggestion.areaId && !areaId) setAreaId(suggestion.areaId);
+      if (suggestion.categoryId && !categoryId) setCategoryId(suggestion.categoryId);
+      if (suggestion.description && !description.trim()) {
+        setDescription(suggestion.description);
+      }
       showToast({
         message: "AIの候補を反映しました。確認して保存してください。",
       });

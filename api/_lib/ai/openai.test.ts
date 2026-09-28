@@ -88,6 +88,39 @@ describe("OpenAiProvider", () => {
     expect(calledUrl).toBe("https://openrouter.ai/api/v1/chat/completions");
   });
 
+  it("strict json_schema向けに additionalProperties:false を含むスキーマをそのままfetch bodyへ転送する", async () => {
+    const schemaWithAdditionalProps = {
+      type: "object",
+      properties: {
+        areaName: { type: ["string", "null"] },
+      },
+      required: ["areaName"],
+      additionalProperties: false,
+    };
+    let capturedBody: Record<string, unknown> | undefined;
+    global.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: "{}" } }] }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const provider = new OpenAiProvider();
+    await provider.generateJson({ ...baseReq, jsonSchema: schemaWithAdditionalProps });
+
+    const responseFormat = capturedBody?.response_format as {
+      type: string;
+      json_schema: { schema: unknown; strict: boolean };
+    };
+    expect(responseFormat.type).toBe("json_schema");
+    expect(responseFormat.json_schema.strict).toBe(true);
+    expect(responseFormat.json_schema.schema).toEqual(schemaWithAdditionalProps);
+    expect(
+      (responseFormat.json_schema.schema as { additionalProperties?: boolean }).additionalProperties,
+    ).toBe(false);
+  });
+
   it("500エラーは upstream_error になる", async () => {
     global.fetch = vi.fn(async () => new Response("boom", { status: 500 })) as unknown as typeof fetch;
     const provider = new OpenAiProvider();

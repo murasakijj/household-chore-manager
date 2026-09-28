@@ -30,6 +30,10 @@ export interface AiChoreProposalItem extends AiChoreSuggestionResult {
 
 // --- 出力スキーマ(AIへ渡すJSON Schemaと、応答を検証するzodスキーマ) ---
 
+// `additionalProperties: false` はOpenAIのstrict `json_schema`出力の必須要件
+// (全objectに付与し、全プロパティをrequiredにする)。Geminiの変換(gemini.ts)は
+// この未知キーを無視するだけ、Anthropicはtoolの`input_schema`としてそのまま渡す
+// だけなので、どちらにも影響しない。
 const suggestionJsonSchema: JsonSchema = {
   type: "object",
   properties: {
@@ -39,6 +43,7 @@ const suggestionJsonSchema: JsonSchema = {
     description: { type: ["string", "null"] },
   },
   required: ["areaName", "categoryName", "intervalDays", "description"],
+  additionalProperties: false,
 };
 
 const suggestionRawSchema = z.object({
@@ -63,10 +68,12 @@ const proposalJsonSchema: JsonSchema = {
           description: { type: ["string", "null"] },
         },
         required: ["name", "areaName", "categoryName", "intervalDays", "description"],
+        additionalProperties: false,
       },
     },
   },
   required: ["items"],
+  additionalProperties: false,
 };
 
 const proposalRawSchema = z.object({

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { ApiRequest, ApiResponse } from "./_lib/types.js";
 import { requireAuth, AuthError } from "./_lib/auth.js";
 import { sendJson, readJsonBody, parseQuery } from "./_lib/http.js";
@@ -91,9 +91,11 @@ function verifyCronSecret(
   if (!header?.startsWith("Bearer ")) return false;
   const token = header.slice("Bearer ".length).trim();
 
-  const expected = Buffer.from(secret);
-  const actual = Buffer.from(token);
-  if (expected.length !== actual.length) return false;
+  // 双方をSHA-256でハッシュしてから比較する: 元の長さが揃っていない場合の
+  // 早期return(=長さの違いというサイドチャネル)も無くし、常に固定長同士を
+  // timingSafeEqual で比較する(レビュー指摘 #10)。
+  const expected = createHash("sha256").update(secret).digest();
+  const actual = createHash("sha256").update(token).digest();
   return timingSafeEqual(expected, actual);
 }
 
@@ -256,7 +258,7 @@ export function createRouter(repoFactory: () => Repo) {
           }
           const repo: Repo = repoFactory();
           const result = await dailySummaryCron(repo, new Date());
-          sendJson(res, 200, result);
+          sendJson(res, result.status, result.body);
           return;
         }
         sendJson(res, 404, { error: "not_found" });

@@ -90,7 +90,13 @@ export class OpenAiProvider implements AiProvider {
         if (!content) throw new AiProviderError(502, "invalid_ai_output");
         return content;
       },
-      { logTag: "ai:openai", statusOf, classify, deadlineMs: DEADLINE_MS },
+      {
+        logTag: "ai:openai",
+        statusOf,
+        classify,
+        deadlineMs: DEADLINE_MS,
+        externalSignal: req.signal,
+      },
     );
 
     try {

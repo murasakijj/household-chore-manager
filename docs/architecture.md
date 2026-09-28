@@ -113,7 +113,9 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 
 ### 朝のまとめ通知ジョブ
 
-各家庭・各メンバーについて、家庭タイムゾーンの現在時刻が `dailySummaryTime` 以上かつ `lastSentLocalDate != 今日` なら、`summary.ts` で文面を作り、そのメンバーの全購読へ送る。対象0件なら送らないが `lastSentLocalDate` は更新する。404/410 の購読は削除。通知タップで `/` を開く（`public/sw.js`）。
+各家庭・各メンバーについて、家庭タイムゾーンの現在時刻が `dailySummaryTime` 以上かつ `lastSentLocalDate != 今日` なら、`summary.ts` で文面を作り、そのメンバーの全購読へ送る。対象0件・購読0件は「当日完了」扱いで `lastSentLocalDate` を更新する。購読が1件以上あるのに1件も届かず、失敗が全て一時的（404/410以外）だった場合は `lastSentLocalDate` を claim 前の値へ補償的に戻し、次の毎時実行で再試行する（詳細と理由は decisions.md「朝のまとめ通知の再試行方針」）。404/410（および 400/403、鍵不正等の暗号化エラー）の購読は削除する。VAPID未設定ならどの家庭もclaimせず 500 `push_not_configured` を返す。通知タップで `/` を開く（`public/sw.js`）。
+
+購読は `endpoint` の sha256 をIDとして家庭・メンバーごとに保存する。**同じ端末（同じ `endpoint`）が別のメンバーとして再登録された場合、その購読の `memberId` は新しいメンバーへ付け替わる**（後勝ち）。これは「その端末の持ち主が変わった」とみなす仕様であり、以前のメンバーはその端末では通知を受け取らなくなる（1台の端末を複数メンバーが同時に共有して両方が通知を受け取る、という用途はMVPでは想定しない）。
 
 ## フロントエンド
 

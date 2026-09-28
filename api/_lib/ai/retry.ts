@@ -10,7 +10,8 @@ import { AiProviderError } from "./types.js";
 export const DEADLINE_MS = 50_000;
 
 const MAX_ATTEMPTS = 3;
-const RETRYABLE_STATUSES = new Set([429, 503]);
+/** 既定のリトライ対象ステータス(429/503)。プロバイダ固有の値は `retryableStatuses` で追加する(例: Anthropicの529)。 */
+const DEFAULT_RETRYABLE_STATUSES = new Set([429, 503]);
 const BACKOFF_SCHEDULE_MS = [1_000, 3_000];
 const JITTER_MAX_MS = 300;
 const MIN_REMAINING_MS_FOR_RETRY = 12_000;
@@ -75,6 +76,14 @@ export interface CallWithRetryOptions {
   deadlineMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** 既定(429/503)に加えてリトライ対象とするステータス(例: Anthropicの529「過負荷」)。 */
+  retryableStatuses?: number[];
+  /**
+   * 呼び出し元からの中断シグナル(例: services/ai.ts の `callAi` が生成する
+   * `AbortController`)。各試行のデッドライン用シグナルと `AbortSignal.any` で
+   * 合成し、外側から中断できるようにする。
+   */
+  externalSignal?: AbortSignal;
 }
 
 /**
@@ -90,6 +99,10 @@ export async function callWithRetry<T>(
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
   const startedAt = now();
+  const retryableStatuses = options.retryableStatuses
+    ? new Set([...DEFAULT_RETRYABLE_STATUSES, ...options.retryableStatuses])
+    : DEFAULT_RETRYABLE_STATUSES;
+  const externalSignal = options.externalSignal;
 
   let lastErr: unknown;
   let lastRetryableStatus: number | undefined;
@@ -104,12 +117,17 @@ export async function callWithRetry<T>(
       );
     }
 
+    const deadlineSignal = AbortSignal.timeout(remaining);
+    const signal = externalSignal
+      ? AbortSignal.any([externalSignal, deadlineSignal])
+      : deadlineSignal;
+
     try {
-      return await raceWithDeadline(attempt(AbortSignal.timeout(remaining)), remaining);
+      return await raceWithDeadline(attempt(signal), remaining);
     } catch (err) {
       lastErr = err;
       const status = statusOf(err);
-      const isRetryable = status !== undefined && RETRYABLE_STATUSES.has(status);
+      const isRetryable = status !== undefined && retryableStatuses.has(status);
       if (isRetryable) lastRetryableStatus = status;
 
       const isLastAttempt = i === MAX_ATTEMPTS - 1;

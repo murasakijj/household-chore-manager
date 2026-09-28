@@ -43,7 +43,9 @@ function classify(err: unknown): AiProviderError {
   });
   const status = statusOf(err);
   if (status !== undefined) {
-    const code = status === 429 ? "rate_limited" : status === 503 ? "overloaded" : "upstream_error";
+    // 529 は Anthropic 固有の「過負荷」ステータス(503と同じ扱い)。
+    const code =
+      status === 429 ? "rate_limited" : status === 503 || status === 529 ? "overloaded" : "upstream_error";
     return new AiProviderError(502, code);
   }
   return new AiProviderError(502, "upstream_error");
@@ -99,7 +101,15 @@ export class AnthropicProvider implements AiProvider {
         if (!toolUse) throw new AiProviderError(502, "invalid_ai_output");
         return toolUse.input;
       },
-      { logTag: "ai:anthropic", statusOf, classify, deadlineMs: DEADLINE_MS },
+      {
+        logTag: "ai:anthropic",
+        statusOf,
+        classify,
+        deadlineMs: DEADLINE_MS,
+        externalSignal: req.signal,
+        // Anthropicは過負荷時に429/503ではなく529を返すことがあるため、リトライ対象に加える。
+        retryableStatuses: [529],
+      },
     );
   }
 }

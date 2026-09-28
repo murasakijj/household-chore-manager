@@ -137,18 +137,57 @@ export const settingsPatchSchema = z
     householdName: z.string().trim().min(1).max(100).optional(),
     timezone: timezoneSchema.optional(),
     dailySummaryEnabled: z.boolean().optional(),
+    // 00:00〜23:00に制限する(レビュー指摘 #5): cronは毎時7分頃に実行されるため、
+    // 23:xx台の途中の時刻を許すと、その日最後の実行までに間に合わず翌日扱いに
+    // なりかねない。23:00なら23:07頃の実行で当日中に届く。
     dailySummaryTime: z
       .string()
       .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .refine((v) => v <= "23:00", { message: "invalid_daily_summary_time" })
       .optional(),
     includeUpcoming: z.boolean().optional(),
     oneTapComplete: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "empty_patch" });
 
+/**
+ * Push購読先(ブラウザの `PushManager` が返すendpoint)のホスト許可リスト
+ * (レビュー指摘 #4)。既知のPushサービスのみを許可し、任意のURLへ通知を
+ * 送信させられる(SSRF的な)経路を塞ぐ。`*.` はサブドメインを含む接尾一致。
+ */
+const ALLOWED_PUSH_HOST_SUFFIXES = [
+  "fcm.googleapis.com",
+  "push.apple.com",
+  "updates.push.services.mozilla.com",
+  "push.services.mozilla.com",
+  "notify.windows.com",
+];
+
+function isAllowedPushHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return ALLOWED_PUSH_HOST_SUFFIXES.some(
+    (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+  );
+}
+
+function isValidPushEndpoint(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  return isAllowedPushHost(url.hostname);
+}
+
 /** `PushSubscriptionJSON`(ブラウザの `PushSubscription.toJSON()`)。 */
 export const pushSubscriptionSchema = z.object({
-  endpoint: z.string().url().max(2000),
+  endpoint: z
+    .string()
+    .url()
+    .max(2000)
+    .refine(isValidPushEndpoint, { message: "invalid_push_endpoint" }),
   keys: z.object({
     p256dh: z.string().min(1).max(500),
     auth: z.string().min(1).max(500),
@@ -156,7 +195,11 @@ export const pushSubscriptionSchema = z.object({
 });
 
 export const pushUnsubscribeSchema = z.object({
-  endpoint: z.string().url().max(2000),
+  endpoint: z
+    .string()
+    .url()
+    .max(2000)
+    .refine(isValidPushEndpoint, { message: "invalid_push_endpoint" }),
 });
 
 // --- クエリパラメータ(一覧・絞り込み系) ---

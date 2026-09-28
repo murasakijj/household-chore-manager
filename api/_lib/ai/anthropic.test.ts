@@ -59,6 +59,19 @@ describe("AnthropicProvider", () => {
     });
   });
 
+  it("529(Anthropic固有の過負荷)は overloaded(502)へ正規化し、リトライ対象になる", async () => {
+    const fetchMock = vi.fn(async () => new Response("overloaded", { status: 529 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = new AnthropicProvider();
+    await expect(provider.generateJson(baseReq)).rejects.toMatchObject({
+      statusCode: 502,
+      code: "overloaded",
+    });
+    // 429/503と同様に最大3回試行される(初回+2リトライ)。
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("503は overloaded(502)へ正規化する", async () => {
     global.fetch = vi.fn(async () => new Response("overloaded", { status: 503 })) as unknown as typeof fetch;
 

@@ -43,6 +43,11 @@ npx web-push generate-vapid-keys
 `VAPID_PRIVATE_KEY` / `VITE_VAPID_PUBLIC_KEY` に使う)。`VAPID_SUBJECT` は
 `mailto:` から始まる連絡先メールアドレス(例 `mailto:you@example.com`)。
 
+> **注意**: VAPID鍵を後から再生成(ローテーション)すると、その時点までに登録された
+> 端末の購読(ブラウザの `PushSubscription`)はすべて無効になる。利用者は「設定」
+> 画面の「この端末で通知を受け取る」を改めて押し、再登録する必要がある
+> (自動では復旧しない)。
+
 ## 3. CRON_SECRET
 
 `/api/cron/daily-summary` を叩く際の認証トークン。ランダムな文字列を生成する。
@@ -103,6 +108,9 @@ openssl rand -base64 32
 
 3. デプロイ後、本番URL(例 `https://household-chore-manager.vercel.app`)を
    Firebase Authentication の承認済みドメインに追加する(手順1-3)。
+4. **`VITE_` から始まる環境変数を追加・変更したときは、必ず Vercel で再デプロイする**
+   (Redeploy)。ビルド時に埋め込まれるため、環境変数を保存しただけでは既存の
+   デプロイには反映されない。
 
 ## 6. GitHub Actions secrets(朝のまとめ通知)
 
@@ -116,7 +124,17 @@ openssl rand -base64 32
 
 Vercel Cron(`vercel.json`、毎日 UTC 23:00 = JST 08:00)も保険として引き続き有効。
 どちらから呼ばれても、送信済みかどうかはサーバー側(`lastSentLocalDate`)で判定するため
-二重送信はしない。
+二重送信はしない。実際の送信は「設定」画面で指定した通知時刻ちょうどではなく、
+その時刻を過ぎたあとの最初の毎時実行(`daily-summary.yml` は毎時7分頃)に届く。
+通知時刻は23:00までしか設定できない(23:xx台だと、その日最後の実行までに間に
+合わない可能性があるため)。
+
+> **GitHub Actions のスケジュール実行は、リポジトリに60日間更新(push)が無いと
+> 自動的に無効化される**(GitHub の仕様)。無効化された場合は、リポジトリの
+> **Actions** タブ → 左側のワークフロー一覧から `Daily summary cron` を選び、
+> 「...」メニュー(または黄色い警告バナー)から **Enable workflow** を押すと復旧する。
+> Vercel Cron(手順2文末)は保険として動き続けるが、頻度が1日1回のみなので、
+> 長期間気づかないと通知が届く時刻が実質1つに制限される点に注意する。
 
 ## 7. iPhoneでの通知許可
 

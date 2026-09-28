@@ -1,7 +1,13 @@
 import type { Repo } from "../repo/types.js";
 import { buildDailySummary } from "../domain/summary.js";
+import { localDate } from "../domain/calendar.js";
 import { listChoresWithStatus, type ChoreWithStatus } from "./chores.js";
-import { PushSubscriptionGoneError, sendPushNotification } from "../push/send.js";
+import {
+  isPushConfigured,
+  PushNotConfiguredError,
+  PushSubscriptionGoneError,
+  sendPushNotification,
+} from "../push/send.js";
 
 /** 朝のまとめ通知ジョブ(architecture.md「朝のまとめ通知ジョブ」、設計書 §12.1)。 */
 
@@ -23,21 +29,16 @@ function localTime(now: Date, timezone: string): string {
   return formatter.format(now);
 }
 
-/** "YYYY-MM-DD" 形式に変換する(§7.3と同じ Intl ベース)。 */
-function localDate(now: Date, timezone: string): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return formatter.format(now);
-}
-
 export async function runDailySummaryJob(
   repo: Repo,
   now: Date,
 ): Promise<DailySummaryRunResult> {
+  // VAPID未設定ならどの家庭・メンバーも claim せずに即座に失敗させる
+  // (レビュー指摘 #3)。呼び出し側(routes/cron.ts)で 500 push_not_configured に変換する。
+  if (!isPushConfigured()) {
+    throw new PushNotConfiguredError();
+  }
+
   const households = await repo.listHouseholds();
 
   let membersConsidered = 0;
@@ -63,6 +64,9 @@ export async function runDailySummaryJob(
       if (nowLocalTime < settings.dailySummaryTime) continue;
       if (settings.lastSentLocalDate === today) continue;
 
+      // 送信前の値を覚えておく(送信が全滅した場合の補償ロールバック用)。
+      const previousLastSentLocalDate = settings.lastSentLocalDate;
+
       // 二重起動対策: 未送信なら先に lastSentLocalDate を確保してから送る。
       // 確保できなければ(既に他の実行が送信済み)スキップする。
       const claimed = await repo.claimDailySummarySlot(
@@ -82,14 +86,20 @@ export async function runDailySummaryJob(
         timezone,
         includeUpcoming: settings.includeUpcoming,
       });
-      // 対象0件でも lastSentLocalDate は既に更新済み(claimDailySummarySlotで)。
+      // 対象0件は「送信不要で当日完了」扱い。lastSentLocalDateは更新したまま
+      // (claimDailySummarySlotで確保済み)にし、ロールバックしない
+      // (decisions.md「朝のまとめ通知の再試行方針」)。
       if (!summary) continue;
 
       const subscriptions = await repo.listPushSubscriptionsForMember(
         household.id,
         member.id,
       );
-      let sentToMember = false;
+      // 購読が1件も無い場合も「当日完了」扱い(decisions.md)。
+      if (subscriptions.length === 0) continue;
+
+      let deliveredCount = 0;
+      let temporaryFailureCount = 0;
       for (const subscription of subscriptions) {
         try {
           await sendPushNotification(subscription, {
@@ -97,7 +107,7 @@ export async function runDailySummaryJob(
             body: summary.text,
             url: "/",
           });
-          sentToMember = true;
+          deliveredCount++;
         } catch (err) {
           if (err instanceof PushSubscriptionGoneError) {
             await repo.deletePushSubscriptionById(household.id, subscription.id);
@@ -105,12 +115,25 @@ export async function runDailySummaryJob(
             continue;
           }
           // 個々の送信失敗で他のメンバー・家庭への処理を止めない。
+          temporaryFailureCount++;
           console.error("[cron:daily-summary] send failed", {
             householdId: household.id,
           });
         }
       }
-      if (sentToMember) notificationsSent++;
+
+      if (deliveredCount > 0) {
+        notificationsSent++;
+      } else if (temporaryFailureCount > 0) {
+        // 購読はあったのに1件も届かず、失敗がすべて一時的(404/410等で削除された
+        // ものを除く)だった場合は、次の毎時実行で再試行されるよう
+        // lastSentLocalDateをclaim前の値へ補償的に戻す(レビュー指摘 #3)。
+        await repo.upsertNotificationSettings(household.id, member.id, {
+          lastSentLocalDate: previousLastSentLocalDate,
+        });
+      }
+      // deliveredCount===0 && temporaryFailureCount===0(=全購読が404/410で削除
+      // された)場合は、送るべき端末が無くなったということなので当日完了扱いのまま。
     }
   }
 

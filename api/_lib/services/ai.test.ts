@@ -47,6 +47,21 @@ describe("suggestChore", () => {
     expect(result.description).toBe("説明文");
   });
 
+  it("AIへ渡すJSON SchemaはOpenAI strict出力向けに additionalProperties:false を持つ", async () => {
+    generateJson.mockResolvedValue({
+      areaName: null,
+      categoryName: null,
+      intervalDays: 7,
+      description: null,
+    });
+    await suggestChore(repo, householdId, "テスト家事");
+    const call = generateJson.mock.calls.at(-1)?.[0] as { jsonSchema: Record<string, unknown> };
+    expect(call.jsonSchema.additionalProperties).toBe(false);
+    expect(call.jsonSchema.required).toEqual(
+      expect.arrayContaining(["areaName", "categoryName", "intervalDays", "description"]),
+    );
+  });
+
   it("存在しない場所・カテゴリ名はnullに落とす", async () => {
     generateJson.mockResolvedValue({
       areaName: "存在しない場所",
@@ -145,5 +160,16 @@ describe("proposeChoreList", () => {
     expect(result.length).toBeLessThanOrEqual(30);
     const names = result.map((r) => r.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("AIへ渡すJSON Schemaは最上位・items要素objectの両方に additionalProperties:false を持つ", async () => {
+    generateJson.mockResolvedValue({ items: [] });
+    await proposeChoreList(repo, householdId, "テスト状況");
+    const call = generateJson.mock.calls.at(-1)?.[0] as { jsonSchema: Record<string, unknown> };
+    expect(call.jsonSchema.additionalProperties).toBe(false);
+    const items = call.jsonSchema.properties as {
+      items: { items: Record<string, unknown> };
+    };
+    expect(items.items.items.additionalProperties).toBe(false);
   });
 });

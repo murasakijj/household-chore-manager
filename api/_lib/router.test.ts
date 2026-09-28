@@ -599,7 +599,7 @@ describe("Push購読ルート", () => {
     const subscribeRes = await call("POST", "push/subscriptions", {
       user: "u1",
       body: {
-        endpoint: "https://push.example.com/abc",
+        endpoint: "https://fcm.googleapis.com/fcm/send/abc",
         keys: { p256dh: "p256dh-value", auth: "auth-value" },
       },
     });
@@ -612,7 +612,7 @@ describe("Push購読ルート", () => {
 
     const deleteRes = await call("DELETE", "push/subscriptions", {
       user: "u1",
-      body: { endpoint: "https://push.example.com/abc" },
+      body: { endpoint: "https://fcm.googleapis.com/fcm/send/abc" },
     });
     expect(deleteRes.status).toBe(200);
 
@@ -624,7 +624,7 @@ describe("Push購読ルート", () => {
     await call("POST", "push/subscriptions", {
       user: "u1",
       body: {
-        endpoint: "https://push.example.com/gone",
+        endpoint: "https://fcm.googleapis.com/fcm/send/gone",
         keys: { p256dh: "p256dh-value", auth: "auth-value" },
       },
     });
@@ -633,6 +633,50 @@ describe("Push購読ルート", () => {
     const res = await call("POST", "push/test", { user: "u1" });
     expect(res.status).toBe(200);
     expect((res.body as { sent: number; removed: number }).removed).toBe(1);
+  });
+
+  it("家庭が異なる購読は互いに見えない・送信されない(レビュー指摘 #14)", async () => {
+    await call("POST", "push/subscriptions", {
+      user: "u1",
+      body: {
+        endpoint: "https://fcm.googleapis.com/fcm/send/u1-device",
+        keys: { p256dh: "p256dh-value", auth: "auth-value" },
+      },
+    });
+
+    // u2は別家庭。u2宛てのテスト送信ではu1の購読へは届かない。
+    const testForU2 = await call("POST", "push/test", { user: "u2" });
+    expect((testForU2.body as { sent: number }).sent).toBe(0);
+    expect(sendNotification).not.toHaveBeenCalled();
+
+    const testForU1 = await call("POST", "push/test", { user: "u1" });
+    expect((testForU1.body as { sent: number }).sent).toBe(1);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("同じmemberIdでない限りendpointを削除できない(レビュー指摘 #14: 家庭内の別メンバー分離)", async () => {
+    // このMVPには「メンバー追加」APIが無いため、別メンバーの購読はリポジトリへ
+    // 直接作る(deletePushSubscriptionByEndpointのmemberId一致チェックを検証する)。
+    const u1 = await call("GET", "auth-check", { user: "u1" });
+    const { household } = u1.body as { household: { id: string } };
+    const otherMemberId = "other-member-id";
+    await repo.upsertPushSubscription(household.id, otherMemberId, {
+      endpoint: "https://fcm.googleapis.com/fcm/send/other-member-device",
+      keys: { p256dh: "p256dh-value", auth: "auth-value" },
+    });
+
+    // u1(本人)としてDELETEを叩いても、他メンバー名義の購読は消えない。
+    const deleteRes = await call("DELETE", "push/subscriptions", {
+      user: "u1",
+      body: { endpoint: "https://fcm.googleapis.com/fcm/send/other-member-device" },
+    });
+    expect(deleteRes.status).toBe(200);
+
+    const remaining = await repo.listPushSubscriptionsForMember(
+      household.id,
+      otherMemberId,
+    );
+    expect(remaining).toHaveLength(1);
   });
 });
 
@@ -705,7 +749,7 @@ describe("cron: /api/cron/daily-summary", () => {
     await call("POST", "push/subscriptions", {
       user: "u1",
       body: {
-        endpoint: "https://push.example.com/summary",
+        endpoint: "https://fcm.googleapis.com/fcm/send/summary",
         keys: { p256dh: "p256dh-value", auth: "auth-value" },
       },
     });
@@ -721,6 +765,49 @@ describe("cron: /api/cron/daily-summary", () => {
     });
     expect((second.body as { notificationsSent: number }).notificationsSent).toBe(0);
     expect(sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("送信が一時的に失敗すればlastSentLocalDateが戻り、次回実行で再送される(レビュー指摘 #3, #14)", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "一時失敗する家事", intervalDays: 3, warningDays: 1, graceDays: 1 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+    const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+    await call("POST", `chores/${choreId}/events`, {
+      user: "u1",
+      body: { clientRequestId: "77777777-8888-4999-8aaa-bbbbbbbbbbbb", occurredAt: old },
+    });
+    await call("PATCH", "settings", { user: "u1", body: { dailySummaryTime: "00:00" } });
+    await call("POST", "push/subscriptions", {
+      user: "u1",
+      body: {
+        endpoint: "https://fcm.googleapis.com/fcm/send/temp-fail",
+        keys: { p256dh: "p256dh-value", auth: "auth-value" },
+      },
+    });
+
+    sendNotification.mockRejectedValueOnce(new Error("network timeout"));
+    const first = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect((first.body as { notificationsSent: number }).notificationsSent).toBe(0);
+
+    sendNotification.mockResolvedValueOnce(undefined);
+    const second = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect((second.body as { notificationsSent: number }).notificationsSent).toBe(1);
+    expect(sendNotification).toHaveBeenCalledTimes(2);
+  });
+
+  it("VAPID未設定なら500 push_not_configuredを返す(レビュー指摘 #3)", async () => {
+    delete process.env.VAPID_PUBLIC_KEY;
+    const res = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect(res.status).toBe(500);
+    expect((res.body as { error: string }).error).toBe("push_not_configured");
   });
 
   it("無効化した家事・取消済み履歴は対象外", async () => {
@@ -759,7 +846,7 @@ describe("cron: /api/cron/daily-summary", () => {
     await call("POST", "push/subscriptions", {
       user: "u1",
       body: {
-        endpoint: "https://push.example.com/upcoming",
+        endpoint: "https://fcm.googleapis.com/fcm/send/upcoming",
         keys: { p256dh: "p256dh-value", auth: "auth-value" },
       },
     });

@@ -476,6 +476,10 @@ export async function unsubscribePush(endpoint: string): Promise<void> {
   await request("DELETE", "push/subscriptions", { body: { endpoint } });
 }
 
-export async function sendTestPush(): Promise<{ sent: number; removed: number }> {
+export async function sendTestPush(): Promise<{
+  sent: number;
+  removed: number;
+  failed: number;
+}> {
   return request("POST", "push/test");
 }

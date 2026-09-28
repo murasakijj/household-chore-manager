@@ -89,7 +89,13 @@ export class GeminiProvider implements AiProvider {
           },
           contents: [{ role: "user", parts: [{ text: req.prompt }] }],
         }),
-      { logTag: "ai:gemini", statusOf, classify, deadlineMs: DEADLINE_MS },
+      {
+        logTag: "ai:gemini",
+        statusOf,
+        classify,
+        deadlineMs: DEADLINE_MS,
+        externalSignal: req.signal,
+      },
     );
 
     const text = response.text;

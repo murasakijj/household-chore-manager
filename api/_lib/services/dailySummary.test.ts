@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const sendNotification = vi.fn();
 vi.mock("web-push", () => ({
@@ -155,5 +155,107 @@ describe("runDailySummaryJob", () => {
     expect(result.subscriptionsRemoved).toBe(1);
     const remaining = await repo.listPushSubscriptionsForMember(householdId, memberId);
     expect(remaining).toHaveLength(0);
+  });
+
+  describe("VAPID未設定(レビュー指摘 #3)", () => {
+    afterEach(() => {
+      process.env.VAPID_PUBLIC_KEY = "pub";
+      process.env.VAPID_PRIVATE_KEY = "priv";
+      process.env.VAPID_SUBJECT = "mailto:test@example.com";
+    });
+
+    it("VAPID未設定なら誰もclaimせず PushNotConfiguredError を投げる", async () => {
+      delete process.env.VAPID_PUBLIC_KEY;
+      await repo.createChore(householdId, {
+        name: "優先度高い家事",
+        description: null,
+        categoryId: null,
+        areaId: null,
+        resourceId: null,
+        scheduleType: "interval",
+        intervalDays: 3,
+        warningDays: 1,
+        graceDays: 1,
+        isActive: true,
+        createdBy: memberId,
+        lastCompletedAt: new Date("2025-12-01T00:00:00Z"),
+      });
+
+      await expect(runDailySummaryJob(repo, NOW)).rejects.toMatchObject({
+        message: "push_not_configured",
+      });
+      expect(sendNotification).not.toHaveBeenCalled();
+
+      const settings = await repo.getNotificationSettings(householdId, memberId);
+      expect(settings?.lastSentLocalDate).toBeNull();
+    });
+  });
+
+  it("送信が全て一時的に失敗すればlastSentLocalDateを元に戻し、次回再試行される(レビュー指摘 #3)", async () => {
+    await repo.createChore(householdId, {
+      name: "優先度高い家事3",
+      description: null,
+      categoryId: null,
+      areaId: null,
+      resourceId: null,
+      scheduleType: "interval",
+      intervalDays: 3,
+      warningDays: 1,
+      graceDays: 1,
+      isActive: true,
+      createdBy: memberId,
+      lastCompletedAt: new Date("2025-12-01T00:00:00Z"),
+    });
+
+    sendNotification.mockRejectedValue(new Error("network timeout"));
+
+    const first = await runDailySummaryJob(repo, NOW);
+    expect(first.notificationsSent).toBe(0);
+    expect(first.subscriptionsRemoved).toBe(0);
+
+    // ロールバックされているので lastSentLocalDate はまだ更新されていない。
+    const settingsAfterFirst = await repo.getNotificationSettings(
+      householdId,
+      memberId,
+    );
+    expect(settingsAfterFirst?.lastSentLocalDate).toBeNull();
+
+    // 次の毎時実行(送信が成功するようになった状態)で再送される。
+    sendNotification.mockResolvedValue(undefined);
+    const second = await runDailySummaryJob(repo, NOW);
+    expect(second.notificationsSent).toBe(1);
+
+    const settingsAfterSecond = await repo.getNotificationSettings(
+      householdId,
+      memberId,
+    );
+    expect(settingsAfterSecond?.lastSentLocalDate).toBe("2026-01-15");
+  });
+
+  it("購読が0件なら当日完了扱いにする(再試行しない)", async () => {
+    await repo.deletePushSubscriptionByEndpoint(
+      householdId,
+      memberId,
+      "https://push.example.com/x",
+    );
+    await repo.createChore(householdId, {
+      name: "優先度高い家事4",
+      description: null,
+      categoryId: null,
+      areaId: null,
+      resourceId: null,
+      scheduleType: "interval",
+      intervalDays: 3,
+      warningDays: 1,
+      graceDays: 1,
+      isActive: true,
+      createdBy: memberId,
+      lastCompletedAt: new Date("2025-12-01T00:00:00Z"),
+    });
+
+    const result = await runDailySummaryJob(repo, NOW);
+    expect(result.notificationsSent).toBe(0);
+    const settings = await repo.getNotificationSettings(householdId, memberId);
+    expect(settings?.lastSentLocalDate).toBe("2026-01-15");
   });
 });

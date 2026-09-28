@@ -122,14 +122,6 @@ export default function ChorePropose() {
     );
   };
 
-  const handleIntervalChange = (key: string, value: number) => {
-    if (!Number.isFinite(value) || value < 1) {
-      updateRow(key, { intervalDays: value });
-      return;
-    }
-    updateRow(key, { intervalDays: value });
-  };
-
   const checkedCount = useMemo(
     () => rows?.filter((r) => r.checked).length ?? 0,
     [rows],
@@ -253,7 +245,7 @@ export default function ChorePropose() {
                       step={1}
                       value={row.intervalDays}
                       onChange={(e) =>
-                        handleIntervalChange(row.key, Number(e.target.value))
+                        updateRow(row.key, { intervalDays: Number(e.target.value) })
                       }
                     />
                     日

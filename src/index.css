@@ -426,6 +426,12 @@ textarea {
   color: var(--status-recommended-text);
 }
 
+.form-hint {
+  font-weight: 400;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
 /* --- 詳細画面 --- */
 
 .detail-block {
