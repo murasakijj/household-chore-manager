@@ -144,7 +144,7 @@ textarea {
 }
 
 .btn-small {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0.35rem 0.7rem;
   font-size: 0.85rem;
 }
@@ -571,7 +571,7 @@ textarea {
 
 .master-list-actions select {
   width: auto;
-  min-height: 40px;
+  min-height: 44px;
 }
 
 .link-list {
@@ -627,7 +627,8 @@ textarea {
   border: none;
   color: #ffffff;
   border-radius: 6px;
-  min-height: 36px;
+  min-height: 44px;
+  min-width: 44px;
   padding: 0 0.6rem;
   cursor: pointer;
   font-weight: 600;

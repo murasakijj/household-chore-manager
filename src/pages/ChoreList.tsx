@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   listAreas,
@@ -39,25 +39,42 @@ export default function ChoreList() {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [sort, setSort] = useState<"status" | "elapsed" | "name">("status");
 
+  // レビュー指摘 #5: 場所・カテゴリ(絞り込み用マスタ)は初回1回だけ取得する。
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [areaList, categoryList] = await Promise.all([
+          listAreas(true),
+          listCategories(true),
+        ]);
+        setAreas(areaList.items);
+        setCategories(categoryList.items);
+      } catch {
+        // フィルタ用マスタの取得失敗は致命的ではないため、一覧自体の読み込みは続行する。
+      }
+    })();
+  }, []);
+
+  // レビュー指摘 #5: フィルタ変更ごとに連番を進め、古い応答が新しい結果を
+  // 上書きしないようにする。
+  const requestSeqRef = useRef(0);
+
   const load = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
     setError(null);
     try {
-      const [choreList, areaList, categoryList] = await Promise.all([
-        listChores({
-          q: q.trim() || undefined,
-          status: status || undefined,
-          areaId: areaId || undefined,
-          categoryId: categoryId || undefined,
-          includeInactive,
-          sort,
-        }),
-        listAreas(true),
-        listCategories(true),
-      ]);
+      const choreList = await listChores({
+        q: q.trim() || undefined,
+        status: status || undefined,
+        areaId: areaId || undefined,
+        categoryId: categoryId || undefined,
+        includeInactive,
+        sort,
+      });
+      if (requestSeqRef.current !== requestId) return; // 古い応答は破棄する
       setChores(choreList.items);
-      setAreas(areaList.items);
-      setCategories(categoryList.items);
     } catch {
+      if (requestSeqRef.current !== requestId) return;
       setError("読み込みに失敗しました。");
     }
   }, [q, status, areaId, categoryId, includeInactive, sort]);
@@ -67,7 +84,7 @@ export default function ChoreList() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const { complete, pendingId } = useCompleteChore((updated) => {
+  const { complete, isPending } = useCompleteChore((updated) => {
     setChores((current) =>
       current
         ? current.map((c) => (c.id === updated.id ? updated : c))
@@ -77,6 +94,12 @@ export default function ChoreList() {
 
   const areaName = (id: string | null) =>
     id ? (areas.find((a) => a.id === id)?.name ?? null) : null;
+
+  // レビュー指摘 #19: 状態「無効」を選んだら、無効な家事も対象に含むよう自動でONにする。
+  const handleStatusChange = (value: ChoreStatus | "") => {
+    setStatus(value);
+    if (value === "inactive") setIncludeInactive(true);
+  };
 
   return (
     <>
@@ -106,7 +129,9 @@ export default function ChoreList() {
           状態
           <select
             value={status}
-            onChange={(e) => setStatus(e.target.value as ChoreStatus | "")}
+            onChange={(e) =>
+              handleStatusChange(e.target.value as ChoreStatus | "")
+            }
           >
             <option value="">すべて</option>
             {STATUS_OPTIONS.map((s) => (
@@ -178,7 +203,7 @@ export default function ChoreList() {
               areaName={areaName(chore.areaId)}
               timezone={timezone}
               onComplete={(c) => void complete(c)}
-              completing={pendingId === chore.id}
+              completing={isPending(chore.id)}
             />
           ))}
         </ul>

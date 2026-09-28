@@ -11,32 +11,12 @@ import { useCompleteChore } from "../hooks/useCompleteChore";
 import ChoreCard from "../components/ChoreCard";
 import Skeleton from "../components/Skeleton";
 import PageHeader from "../components/PageHeader";
+import { STATUS_META } from "../lib/statusMeta";
 
 interface Section {
   key: string;
   title: string;
   items: ChoreDto[];
-}
-
-function replaceInSections(
-  data: TodayResponse,
-  updated: ChoreDto,
-): TodayResponse {
-  // 家事の状態が変わったら「今日」画面全体を再取得するのが最も正確だが、
-  // 楽観的にその場で除去して体感速度を優先する(再取得は呼び出し側で行う)。
-  const strip = (items: ChoreDto[]) => items.filter((c) => c.id !== updated.id);
-  return {
-    ...data,
-    sections: {
-      overdue: strip(data.sections.overdue),
-      recommended: strip(data.sections.recommended),
-      upcoming: strip(data.sections.upcoming),
-      neverDone: strip(data.sections.neverDone),
-      doneToday: [...strip(data.sections.doneToday), updated].filter(
-        (c) => c.status === "not_due" && c.elapsedDays === 0,
-      ),
-    },
-  };
 }
 
 export default function Today() {
@@ -51,7 +31,7 @@ export default function Today() {
     try {
       const [today, areaList] = await Promise.all([
         getToday(),
-        listAreas(false),
+        listAreas(true),
       ]);
       setData(today);
       setAreas(areaList.items);
@@ -65,10 +45,11 @@ export default function Today() {
     void load();
   }, [load]);
 
-  const { complete, pendingId } = useCompleteChore((updated) => {
-    setData((current) =>
-      current ? replaceInSections(current, updated) : current,
-    );
+  // レビュー指摘 #1: 完了/Undo後は today.ts のクライアント側再実装で楽観的に
+  // 並び替えるのではなく、`getToday` を再取得してサーバーの分類・並び・
+  // notDueCount をそのまま使う。
+  const { complete, isPending } = useCompleteChore(() => {
+    void load();
   });
 
   const areaName = (id: string | null) =>
@@ -96,14 +77,28 @@ export default function Today() {
   }
 
   const sections: Section[] = [
-    { key: "overdue", title: "優先", items: data.sections.overdue },
+    {
+      key: "overdue",
+      title: STATUS_META.overdue.label,
+      items: data.sections.overdue,
+    },
     {
       key: "recommended",
-      title: "今日やった方がよい",
+      title: STATUS_META.recommended.label,
       items: data.sections.recommended,
     },
-    { key: "upcoming", title: "そろそろ", items: data.sections.upcoming },
-    { key: "neverDone", title: "初回未実施", items: data.sections.neverDone },
+    {
+      key: "upcoming",
+      title: STATUS_META.upcoming.label,
+      items: data.sections.upcoming,
+    },
+    {
+      key: "neverDone",
+      title: STATUS_META.never_done.label,
+      items: data.sections.neverDone,
+    },
+    // 「本日実施済み」は状態そのものではない(not_dueのうち本日分)ため、
+    // STATUS_METAのラベルを参照せずここに直接置く(設計書 §8.2)。
     { key: "doneToday", title: "本日実施済み", items: data.sections.doneToday },
   ];
 
@@ -128,7 +123,7 @@ export default function Today() {
                     areaName={areaName(chore.areaId)}
                     timezone={timezone}
                     onComplete={(c) => void complete(c)}
-                    completing={pendingId === chore.id}
+                    completing={isPending(chore.id)}
                   />
                 ))}
               </ul>

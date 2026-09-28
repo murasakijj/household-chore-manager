@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useToast } from "../contexts/useToast";
 import PageHeader from "./PageHeader";
 import Skeleton from "./Skeleton";
@@ -36,6 +36,10 @@ export default function MasterListEditor<T extends MasterItem>({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
 
+  // レビュー指摘 #16: Enterキー確定後のblurによる二重送信を、Reactの
+  // 状態更新タイミングに左右されない同期フラグで防ぐ。
+  const renameInFlightRef = useRef(false);
+
   const load = async () => {
     setError(null);
     try {
@@ -67,16 +71,28 @@ export default function MasterListEditor<T extends MasterItem>({
     }
   };
 
-  const handleRename = async (id: string) => {
-    if (!editingName.trim()) return;
+  const handleRename = async (id: string, originalName: string) => {
+    if (renameInFlightRef.current) return; // 送信中は再入禁止
+    const trimmed = editingName.trim();
+    if (!trimmed) {
+      setEditingId(null);
+      return;
+    }
+    if (trimmed === originalName) {
+      // 名前が変わっていなければ送信しない。
+      setEditingId(null);
+      return;
+    }
+    renameInFlightRef.current = true;
     setBusyId(id);
     try {
-      await patch(id, { name: editingName.trim() });
+      await patch(id, { name: trimmed });
       setEditingId(null);
       await load();
     } catch {
       showToast({ message: "名前の変更に失敗しました。", tone: "error" });
     } finally {
+      renameInFlightRef.current = false;
       setBusyId(null);
     }
   };
@@ -108,6 +124,9 @@ export default function MasterListEditor<T extends MasterItem>({
       await load();
     } catch {
       showToast({ message: "並び替えに失敗しました。", tone: "error" });
+      // レビュー指摘 #16: 2件中1件だけ成功している可能性があるため、再取得して
+      // 表示をサーバーの実際の状態に合わせ直す。
+      await load();
     } finally {
       setBusyId(null);
     }
@@ -147,10 +166,15 @@ export default function MasterListEditor<T extends MasterItem>({
                   value={editingName}
                   autoFocus
                   onChange={(e) => setEditingName(e.target.value)}
-                  onBlur={() => void handleRename(item.id)}
+                  onBlur={() => void handleRename(item.id, item.name)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void handleRename(item.id);
-                    if (e.key === "Escape") setEditingId(null);
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleRename(item.id, item.name);
+                    }
+                    if (e.key === "Escape") {
+                      setEditingId(null);
+                    }
                   }}
                 />
               ) : (

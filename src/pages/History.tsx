@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listAllEvents,
   listAreas,
@@ -12,7 +12,12 @@ import {
 } from "../lib/api";
 import { useSettings } from "../contexts/useSettings";
 import { useToast } from "../contexts/useToast";
-import { datetimeLocalToOffsetIso, formatDateTime } from "../lib/datetime";
+import { describeApiError, isAlreadyVoidedError } from "../lib/errorMessages";
+import {
+  datetimeLocalToOffsetIso,
+  endOfCalendarDayOffsetIso,
+  formatDateTime,
+} from "../lib/datetime";
 import PageHeader from "../components/PageHeader";
 import Skeleton from "../components/Skeleton";
 
@@ -36,7 +41,9 @@ export default function History() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [includeVoided, setIncludeVoided] = useState(false);
+  const [rangeError, setRangeError] = useState<string | null>(null);
 
+  // レビュー指摘 #5: 家事・場所・実施者の一覧(絞り込み用マスタ)は初回1回だけ取得する。
   useEffect(() => {
     void (async () => {
       try {
@@ -54,6 +61,9 @@ export default function History() {
     })();
   }, []);
 
+  // レビュー指摘 #12: 開始日 > 終了日は入力エラーとして扱い、取得しない。
+  const dateRangeInvalid = Boolean(fromDate && toDate && fromDate > toDate);
+
   const buildFilterParams = useCallback(
     () => ({
       choreId: choreId || undefined,
@@ -62,27 +72,43 @@ export default function History() {
       from: fromDate
         ? datetimeLocalToOffsetIso(`${fromDate}T00:00`, timezone)
         : undefined,
-      to: toDate
-        ? datetimeLocalToOffsetIso(`${toDate}T23:59`, timezone)
-        : undefined,
+      // レビュー指摘 #12: 終了日は家庭TZでのその日の23:59:59.999まで含める。
+      to: toDate ? endOfCalendarDayOffsetIso(toDate, timezone) : undefined,
       includeVoided,
     }),
     [choreId, areaId, actorMemberId, fromDate, toDate, includeVoided, timezone],
   );
 
+  // レビュー指摘 #5: フィルタ変更のたびに連番を進め、古い応答(loadMoreの古い
+  // カーソルを含む)を破棄する。
+  const requestSeqRef = useRef(0);
+
   const load = useCallback(async () => {
+    const requestId = ++requestSeqRef.current;
+    setRangeError(
+      fromDate && toDate && fromDate > toDate
+        ? "開始日は終了日より前の日付にしてください。"
+        : null,
+    );
+    if (fromDate && toDate && fromDate > toDate) {
+      setEvents([]);
+      setNextCursor(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const page = await listAllEvents({ ...buildFilterParams(), limit: 50 });
+      if (requestSeqRef.current !== requestId) return; // 古い応答は破棄する
       setEvents(page.items);
       setNextCursor(page.nextCursor);
     } catch {
+      if (requestSeqRef.current !== requestId) return;
       setError("読み込みに失敗しました。");
     } finally {
-      setLoading(false);
+      if (requestSeqRef.current === requestId) setLoading(false);
     }
-  }, [buildFilterParams]);
+  }, [buildFilterParams, fromDate, toDate]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -90,7 +116,8 @@ export default function History() {
   }, [load]);
 
   const loadMore = async () => {
-    if (!nextCursor) return;
+    if (!nextCursor || dateRangeInvalid) return;
+    const requestId = requestSeqRef.current; // フィルタが変わったら古いカーソルを破棄する
     setLoadingMore(true);
     try {
       const page = await listAllEvents({
@@ -98,12 +125,14 @@ export default function History() {
         limit: 50,
         cursor: nextCursor,
       });
+      if (requestSeqRef.current !== requestId) return;
       setEvents((current) => [...current, ...page.items]);
       setNextCursor(page.nextCursor);
     } catch {
+      if (requestSeqRef.current !== requestId) return;
       showToast({ message: "追加読み込みに失敗しました。", tone: "error" });
     } finally {
-      setLoadingMore(false);
+      if (requestSeqRef.current === requestId) setLoadingMore(false);
     }
   };
 
@@ -115,8 +144,19 @@ export default function History() {
       await voidChoreEvent(eventId);
       showToast({ message: "記録を取り消しました。" });
       await load();
-    } catch {
-      showToast({ message: "取り消しに失敗しました。", tone: "error" });
+    } catch (err) {
+      if (isAlreadyVoidedError(err)) {
+        showToast({
+          message: "この記録は既に取り消し済みです。",
+          tone: "warning",
+        });
+        await load();
+      } else {
+        showToast({
+          message: describeApiError(err, "取り消しに失敗しました。"),
+          tone: "error",
+        });
+      }
     } finally {
       setBusyEventId(null);
     }
@@ -201,9 +241,10 @@ export default function History() {
         </label>
       </form>
 
+      {rangeError && <p role="alert">{rangeError}</p>}
       {error && <p role="alert">{error}</p>}
       {loading && <Skeleton rows={6} />}
-      {!loading && events.length === 0 && (
+      {!loading && !rangeError && events.length === 0 && (
         <p className="empty-state">該当する履歴がありません。</p>
       )}
       {!loading && events.length > 0 && (

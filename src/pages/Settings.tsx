@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { patchSettings } from "../lib/api";
+import { useAuth } from "../contexts/useAuth";
 import { useSettings } from "../contexts/useSettings";
 import { useToast } from "../contexts/useToast";
+import { describeApiError } from "../lib/errorMessages";
 import PageHeader from "../components/PageHeader";
 import Skeleton from "../components/Skeleton";
 
@@ -14,8 +16,25 @@ const COMMON_TIMEZONES = [
   "Europe/London",
 ];
 
+/** レビュー指摘 #13: 送信前にタイムゾーンをクライアントでも検証する。 */
+function isValidTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function Settings() {
-  const { settings, loading, refresh, setSettings } = useSettings();
+  const {
+    settings,
+    loading,
+    error: loadError,
+    refresh,
+    setSettings,
+  } = useSettings();
+  const { signOutUser } = useAuth();
   const { showToast } = useToast();
 
   const [dailySummaryEnabled, setDailySummaryEnabled] = useState(false);
@@ -38,6 +57,10 @@ export default function Settings() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isValidTimezone(timezone)) {
+      setError("タイムゾーンの指定が正しくありません。");
+      return;
+    }
     setError(null);
     setSaving(true);
     try {
@@ -50,8 +73,8 @@ export default function Settings() {
       });
       setSettings(result);
       showToast({ message: "設定を保存しました。" });
-    } catch {
-      setError("保存に失敗しました。");
+    } catch (err) {
+      setError(describeApiError(err, "保存に失敗しました。"));
     } finally {
       setSaving(false);
     }
@@ -62,6 +85,19 @@ export default function Settings() {
       <>
         <PageHeader title="設定" />
         <Skeleton rows={4} />
+      </>
+    );
+  }
+
+  // レビュー指摘 #2: settings が無い間はフォームを出さず、既定値での上書き保存もできない。
+  if (!settings) {
+    return (
+      <>
+        <PageHeader title="設定" />
+        <p role="alert">{loadError ?? "設定を読み込めませんでした。"}</p>
+        <button type="button" className="btn" onClick={() => void refresh()}>
+          再試行
+        </button>
       </>
     );
   }
@@ -153,6 +189,16 @@ export default function Settings() {
             </Link>
           </li>
         </ul>
+      </section>
+
+      <section className="detail-block">
+        <button
+          type="button"
+          className="btn btn-danger"
+          onClick={() => void signOutUser()}
+        >
+          ログアウト
+        </button>
       </section>
     </>
   );

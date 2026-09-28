@@ -4,6 +4,8 @@ import type { SettingsResponse } from "../lib/api";
 export interface SettingsContextValue {
   settings: SettingsResponse | null;
   loading: boolean;
+  /** 取得に失敗した場合のエラーメッセージ。`refresh()` で再試行できる。 */
+  error: string | null;
   /** 家庭のタイムゾーン。設定未取得時は `Asia/Tokyo`(設計書 §7.2 の初期値)。 */
   timezone: string;
   refresh: () => Promise<void>;

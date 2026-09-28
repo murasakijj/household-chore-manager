@@ -17,6 +17,8 @@ interface DateTimeParts {
   second: number;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 function formatPartsInTimeZone(instant: Date, timeZone: string): DateTimeParts {
   const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -60,14 +62,40 @@ function offsetMinutesAt(instant: Date, timeZone: string): number {
   return Math.round((asUtc - instant.getTime()) / 60000);
 }
 
+function partsEqual(
+  a: DateTimeParts,
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+  s: number,
+): boolean {
+  return (
+    a.year === y &&
+    a.month === mo &&
+    a.day === d &&
+    a.hour === h &&
+    a.minute === mi &&
+    a.second === s
+  );
+}
+
 function pad(n: number, width = 2): string {
   return String(Math.abs(n)).padStart(width, "0");
 }
 
 /**
- * `datetime-local` の値("YYYY-MM-DDTHH:MM" または秒付き)を、`timeZone` に
- * おける壁時計時刻とみなして実時刻(UTC の `Date`)へ変換する。
- * DST境界をまたぐ場合に備え、オフセット推定を2回行う(標準的な手法)。
+ * 壁時計時刻(`timeZone` における現地時刻)を実時刻(UTC の `Date`)へ変換する。
+ *
+ * DST境界の扱いは Temporal の `disambiguation: "compatible"` と同じ方針:
+ * - 春時間切替で存在しない時刻(例: 2:00〜2:59が無い)は、切替後へ繰り上げる
+ *   (例: 2:30 → 3:30)。
+ * - 秋時間切替で重複する時刻(同じ壁時計が2回来る)は、早い方(1回目)を採用する。
+ *
+ * 判定は、対象日の前日・翌日(DST境界が同日内に複数起きることはない)の
+ * オフセットを候補として2通り試し、`timeZone` で実際にその壁時計に
+ * フォーマットし直せるかで検証する(外部ライブラリを使わない簡易実装)。
  */
 export function datetimeLocalToDate(value: string, timeZone: string): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(
@@ -76,24 +104,41 @@ export function datetimeLocalToDate(value: string, timeZone: string): Date {
   if (!match) {
     throw new Error(`invalid datetime-local value: ${value}`);
   }
-  const [, y, mo, d, h, mi, s] = match;
-  const wallAsUtcMs = Date.UTC(
-    Number(y),
-    Number(mo) - 1,
-    Number(d),
-    Number(h),
-    Number(mi),
-    s ? Number(s) : 0,
-  );
+  const [, yStr, moStr, dStr, hStr, miStr, sStr] = match;
+  const y = Number(yStr);
+  const mo = Number(moStr);
+  const d = Number(dStr);
+  const h = Number(hStr);
+  const mi = Number(miStr);
+  const s = sStr ? Number(sStr) : 0;
 
-  const offset = offsetMinutesAt(new Date(wallAsUtcMs), timeZone);
-  let utcMs = wallAsUtcMs - offset * 60000;
-  // 1回目の推定で得たUTC時刻でオフセットを取り直し、DST境界付近を補正する。
-  const offset2 = offsetMinutesAt(new Date(utcMs), timeZone);
-  if (offset2 !== offset) {
-    utcMs = wallAsUtcMs - offset2 * 60000;
+  const wallUtcMs = Date.UTC(y, mo - 1, d, h, mi, s);
+
+  const offsetBefore = offsetMinutesAt(new Date(wallUtcMs - DAY_MS), timeZone);
+  const offsetAfter = offsetMinutesAt(new Date(wallUtcMs + DAY_MS), timeZone);
+  const candBefore = wallUtcMs - offsetBefore * 60000;
+  const candAfter = wallUtcMs - offsetAfter * 60000;
+
+  const reproduces = (ms: number) =>
+    partsEqual(
+      formatPartsInTimeZone(new Date(ms), timeZone),
+      y,
+      mo,
+      d,
+      h,
+      mi,
+      s,
+    );
+
+  const validCandidates = Array.from(new Set([candBefore, candAfter])).filter(
+    reproduces,
+  );
+  if (validCandidates.length > 0) {
+    // 通常(候補1件)またはDST重複(候補2件): 早い方(1回目)を採用する。
+    return new Date(Math.min(...validCandidates));
   }
-  return new Date(utcMs);
+  // DSTギャップ: 存在しない時刻。切替後(遅い方)へ繰り上げる。
+  return new Date(Math.max(candBefore, candAfter));
 }
 
 /** `instant` を `timeZone` におけるオフセット付き ISO 8601 文字列に変換する。 */
@@ -104,10 +149,12 @@ export function dateToOffsetIsoString(instant: Date, timeZone: string): string {
   const offsetStr = `${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(
     Math.abs(offset) % 60,
   )}`;
+  const ms = ((instant.getTime() % 1000) + 1000) % 1000;
+  const msStr = ms !== 0 ? `.${String(ms).padStart(3, "0")}` : "";
   return (
     `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}:${pad(
       p.second,
-    )}` + offsetStr
+    )}${msStr}` + offsetStr
   );
 }
 
@@ -127,6 +174,35 @@ export function toDatetimeLocalValue(
   const instant = typeof value === "string" ? new Date(value) : value;
   const p = formatPartsInTimeZone(instant, timeZone);
   return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+/**
+ * `timeZone` における、ある暦日("YYYY-MM-DD")の末尾の瞬間
+ * (23:59:59.999、その暦日の最後のミリ秒)を、オフセット付き ISO 8601 文字列で返す。
+ * 履歴の期間絞り込み(終了日)に使う。DST境界を含む日でも、翌日0:00の1ms前として
+ * 正しく計算する(`datetime-local` の"23:59:59.999"を直接解釈するのではない)。
+ */
+export function endOfCalendarDayOffsetIso(
+  dateStr: string,
+  timeZone: string,
+): string {
+  const nextDay = addOneCalendarDay(dateStr);
+  const startOfNextDay = datetimeLocalToDate(`${nextDay}T00:00:00`, timeZone);
+  const endInstant = new Date(startOfNextDay.getTime() - 1);
+  return dateToOffsetIsoString(endInstant, timeZone);
+}
+
+/** "YYYY-MM-DD" の翌日を "YYYY-MM-DD" で返す(タイムゾーンに依存しない純粋な暦計算)。 */
+export function addOneCalendarDay(dateStr: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) throw new Error(`invalid date value: ${dateStr}`);
+  const [, yStr, moStr, dStr] = match;
+  const next = new Date(
+    Date.UTC(Number(yStr), Number(moStr) - 1, Number(dStr) + 1),
+  );
+  return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(
+    next.getUTCDate(),
+  )}`;
 }
 
 /** `timeZone` における現在時刻を、日本語ロケールの短い日時文字列にする(一覧・詳細表示用)。 */
@@ -159,4 +235,18 @@ export function formatDate(
     month: "numeric",
     day: "numeric",
   }).format(instant);
+}
+
+/**
+ * 暦日文字列("YYYY-MM-DD"、`nextChangeDate` 等)を "YYYY/MM/DD" 表示にする。
+ * `Date` へ変換してタイムゾーン付きで再フォーマットすると、実行環境やタイムゾーンに
+ * よって前後の日にずれる恐れがあるため、文字列のまま整形する
+ * (`api/_lib/domain/status.ts` の `nextChangeDate` は既に家庭のタイムゾーンでの暦日)。
+ */
+export function formatCalendarDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) return dateStr;
+  const [, y, mo, d] = match;
+  return `${y}/${mo}/${d}`;
 }

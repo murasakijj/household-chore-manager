@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   addChoreEvent,
   getChore,
@@ -10,6 +10,8 @@ import {
 import { useAuth } from "../contexts/useAuth";
 import { useSettings } from "../contexts/useSettings";
 import { useToast } from "../contexts/useToast";
+import { describeApiError } from "../lib/errorMessages";
+import { generateUuidV4 } from "../lib/uuid";
 import {
   datetimeLocalToOffsetIso,
   toDatetimeLocalValue,
@@ -17,12 +19,21 @@ import {
 import PageHeader from "../components/PageHeader";
 import Skeleton from "../components/Skeleton";
 
+interface RecordLocationState {
+  from?: string;
+}
+
 export default function ChoreRecord() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { member } = useAuth();
-  const { timezone } = useSettings();
+  const location = useLocation();
+  const { member, household } = useAuth();
+  const { settings } = useSettings();
   const { showToast } = useToast();
+
+  // レビュー指摘 #3: タイムゾーンが確定するまで(設定取得前の `Asia/Tokyo` 仮置きで)
+  // フォームを描画しない。`household` はログイン時のauth-checkで確定済みの値。
+  const timezone = settings?.household.timezone ?? household?.timezone ?? null;
 
   const [chore, setChore] = useState<ChoreDetailDto | null>(null);
   const [members, setMembers] = useState<MemberDto[]>([]);
@@ -31,11 +42,21 @@ export default function ChoreRecord() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const [occurredAtLocal, setOccurredAtLocal] = useState(() =>
-    toDatetimeLocalValue(new Date(), timezone),
-  );
+  const [occurredAtLocal, setOccurredAtLocal] = useState("");
+  const [occurredAtInitialized, setOccurredAtInitialized] = useState(false);
   const [actorMemberId, setActorMemberId] = useState("");
   const [note, setNote] = useState("");
+
+  // レビュー指摘 #6: 冪等キーはマウント時に1回だけ生成し、保存が成功するまで
+  // 使い回す(再試行しても同じ `clientRequestId` になり、二重登録を防げる)。
+  const clientRequestIdRef = useRef<string>(generateUuidV4());
+
+  useEffect(() => {
+    if (!timezone || occurredAtInitialized) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOccurredAtLocal(toDatetimeLocalValue(new Date(), timezone));
+    setOccurredAtInitialized(true);
+  }, [timezone, occurredAtInitialized]);
 
   useEffect(() => {
     void (async () => {
@@ -58,7 +79,7 @@ export default function ChoreRecord() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!id) return;
+    if (!id || !timezone) return;
     const iso = datetimeLocalToOffsetIso(occurredAtLocal, timezone);
     if (new Date(iso).getTime() > Date.now()) {
       setFormError("未来の日時は記録できません。");
@@ -67,12 +88,8 @@ export default function ChoreRecord() {
     setFormError(null);
     setSaving(true);
     try {
-      const clientRequestId =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random()}`;
       const result = await addChoreEvent(id, {
-        clientRequestId,
+        clientRequestId: clientRequestIdRef.current,
         occurredAt: iso,
         actorMemberId: actorMemberId || undefined,
         note: note.trim() || null,
@@ -85,15 +102,17 @@ export default function ChoreRecord() {
       } else {
         showToast({ message: "記録しました。" });
       }
-      navigate(`/chores/${id}`);
-    } catch {
-      setFormError("記録に失敗しました。");
+      // レビュー指摘 #18: 遷移元(location.state.from)があればそこへ、無ければ詳細へ。
+      const state = location.state as RecordLocationState | null;
+      navigate(state?.from ?? `/chores/${id}`, { replace: true });
+    } catch (err) {
+      setFormError(describeApiError(err, "記録に失敗しました。"));
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  if (loading || !timezone || !occurredAtInitialized) {
     return (
       <>
         <PageHeader title="実施記録" back />

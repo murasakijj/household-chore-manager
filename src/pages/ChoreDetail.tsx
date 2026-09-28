@@ -17,7 +17,8 @@ import {
 import { useSettings } from "../contexts/useSettings";
 import { useCompleteChore } from "../hooks/useCompleteChore";
 import { useToast } from "../contexts/useToast";
-import { formatDate, formatDateTime } from "../lib/datetime";
+import { describeApiError, isAlreadyVoidedError } from "../lib/errorMessages";
+import { formatCalendarDate, formatDateTime } from "../lib/datetime";
 import StatusBadge from "../components/StatusBadge";
 import Skeleton from "../components/Skeleton";
 import PageHeader from "../components/PageHeader";
@@ -62,7 +63,7 @@ export default function ChoreDetail() {
     void load();
   }, [load]);
 
-  const { complete, pendingId } = useCompleteChore((updated) => {
+  const { complete, isPending } = useCompleteChore((updated) => {
     setChore((current) => (current ? { ...current, ...updated } : current));
     void load();
   });
@@ -101,8 +102,19 @@ export default function ChoreDetail() {
       await voidChoreEvent(eventId);
       showToast({ message: "記録を取り消しました。" });
       await load();
-    } catch {
-      showToast({ message: "取り消しに失敗しました。", tone: "error" });
+    } catch (err) {
+      if (isAlreadyVoidedError(err)) {
+        showToast({
+          message: "この記録は既に取り消し済みです。",
+          tone: "warning",
+        });
+        await load();
+      } else {
+        showToast({
+          message: describeApiError(err, "取り消しに失敗しました。"),
+          tone: "error",
+        });
+      }
     } finally {
       setBusy(false);
     }
@@ -157,7 +169,7 @@ export default function ChoreDetail() {
             <dt>次の状態変化予定日</dt>
             <dd>
               {chore.nextChangeDate
-                ? formatDate(chore.nextChangeDate, timezone)
+                ? formatCalendarDate(chore.nextChangeDate)
                 : "—"}
             </dd>
           </div>
@@ -203,12 +215,16 @@ export default function ChoreDetail() {
         <button
           type="button"
           className="btn btn-primary"
-          disabled={pendingId === chore.id}
+          disabled={isPending(chore.id)}
           onClick={() => void complete(chore)}
         >
           やった
         </button>
-        <Link className="btn" to={`/chores/${chore.id}/record`}>
+        <Link
+          className="btn"
+          to={`/chores/${chore.id}/record`}
+          state={{ from: `/chores/${chore.id}` }}
+        >
           日時を指定して記録
         </Link>
         <Link className="btn" to={`/chores/${chore.id}/edit`}>

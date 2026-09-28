@@ -1,31 +1,37 @@
 import { useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { addChoreEvent, voidChoreEvent, type ChoreDto } from "../lib/api";
 import { useSettings } from "../contexts/useSettings";
 import { useToast } from "../contexts/useToast";
+import { generateUuidV4 } from "../lib/uuid";
 
 /**
  * 「やった」ボタンの共通挙動(設計書 UC-02, architecture.md)。
  * `oneTapComplete` ON なら即記録してUndo付きトーストを出し、OFF なら実施記録画面へ遷移する。
+ *
+ * 多重実行防止は家事IDごと(レビュー指摘 #15): 別の家事の送信中でも、他の家事の
+ * 「やった」は押せる。
  */
 export function useCompleteChore(onUpdated?: (chore: ChoreDto) => void) {
   const { settings } = useSettings();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const location = useLocation();
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const complete = useCallback(
     async (chore: ChoreDto) => {
       if (!settings || !settings.notification.oneTapComplete) {
-        navigate(`/chores/${chore.id}/record`);
+        navigate(`/chores/${chore.id}/record`, {
+          state: { from: location.pathname },
+        });
         return;
       }
-      if (pendingId) return;
-      setPendingId(chore.id);
-      const clientRequestId =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random()}`;
+      if (pendingIds.has(chore.id)) return;
+      setPendingIds((current) => new Set(current).add(chore.id));
+      const clientRequestId = generateUuidV4();
       try {
         const result = await addChoreEvent(chore.id, { clientRequestId });
         onUpdated?.(result.chore);
@@ -55,11 +61,19 @@ export function useCompleteChore(onUpdated?: (chore: ChoreDto) => void) {
       } catch {
         showToast({ message: "記録に失敗しました。", tone: "error" });
       } finally {
-        setPendingId(null);
+        setPendingIds((current) => {
+          const next = new Set(current);
+          next.delete(chore.id);
+          return next;
+        });
       }
     },
-    [settings, pendingId, navigate, onUpdated, showToast],
+    [settings, pendingIds, navigate, location.pathname, onUpdated, showToast],
   );
 
-  return { complete, pendingId };
+  return {
+    complete,
+    pendingIds,
+    isPending: (choreId: string) => pendingIds.has(choreId),
+  };
 }

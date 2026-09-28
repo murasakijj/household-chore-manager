@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createResource,
   listAreas,
@@ -35,6 +35,9 @@ export default function ResourcesSettings() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+
+  // レビュー指摘 #16: Enterキー確定後のblurによる二重送信を防ぐ同期フラグ。
+  const renameInFlightRef = useRef(false);
 
   const load = async () => {
     setError(null);
@@ -74,16 +77,27 @@ export default function ResourcesSettings() {
     }
   };
 
-  const handleRename = async (id: string) => {
-    if (!editingName.trim()) return;
+  const handleRename = async (id: string, originalName: string) => {
+    if (renameInFlightRef.current) return; // 送信中は再入禁止
+    const trimmed = editingName.trim();
+    if (!trimmed) {
+      setEditingId(null);
+      return;
+    }
+    if (trimmed === originalName) {
+      setEditingId(null);
+      return;
+    }
+    renameInFlightRef.current = true;
     setBusyId(id);
     try {
-      await patchResource(id, { name: editingName.trim() });
+      await patchResource(id, { name: trimmed });
       setEditingId(null);
       await load();
     } catch {
       showToast({ message: "名前の変更に失敗しました。", tone: "error" });
     } finally {
+      renameInFlightRef.current = false;
       setBusyId(null);
     }
   };
@@ -115,6 +129,11 @@ export default function ResourcesSettings() {
   const areaName = (id: string | null) =>
     id ? (areas.find((a) => a.id === id)?.name ?? "") : "";
 
+  // レビュー指摘 #11: 無効な場所は新規選択肢として出さない(既存参照は表示する)。
+  const activeAreas = areas.filter((a) => a.isActive);
+  const areaOptionsFor = (currentAreaId: string | null) =>
+    areas.filter((a) => a.isActive || a.id === currentAreaId);
+
   return (
     <>
       <PageHeader title="対象リソースの管理" back />
@@ -132,7 +151,7 @@ export default function ResourcesSettings() {
           onChange={(e) => setNewAreaId(e.target.value)}
         >
           <option value="">場所未設定</option>
-          {areas.map((a) => (
+          {activeAreas.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
             </option>
@@ -169,9 +188,12 @@ export default function ResourcesSettings() {
                   value={editingName}
                   autoFocus
                   onChange={(e) => setEditingName(e.target.value)}
-                  onBlur={() => void handleRename(item.id)}
+                  onBlur={() => void handleRename(item.id, item.name)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void handleRename(item.id);
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleRename(item.id, item.name);
+                    }
                     if (e.key === "Escape") setEditingId(null);
                   }}
                 />
@@ -201,9 +223,10 @@ export default function ResourcesSettings() {
                   }
                 >
                   <option value="">場所未設定</option>
-                  {areas.map((a) => (
+                  {areaOptionsFor(item.areaId).map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
+                      {!a.isActive ? "(無効)" : ""}
                     </option>
                   ))}
                 </select>

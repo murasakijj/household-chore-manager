@@ -11,8 +11,11 @@ import {
   type CategoryDto,
   type ResourceDto,
 } from "../lib/api";
+import { useAuth } from "../contexts/useAuth";
 import { useSettings } from "../contexts/useSettings";
 import { useToast } from "../contexts/useToast";
+import { defaultWarningGrace } from "../lib/choreDefaults";
+import { describeApiError } from "../lib/errorMessages";
 import {
   datetimeLocalToOffsetIso,
   toDatetimeLocalValue,
@@ -20,23 +23,35 @@ import {
 import PageHeader from "../components/PageHeader";
 import Skeleton from "../components/Skeleton";
 
-/** 設計書 §7.6: 新規登録時の予告/猶予日数の推奨初期値。 */
-function defaultWarningGrace(intervalDays: number): {
-  warningDays: number;
-  graceDays: number;
-} {
-  const rawWarning = Math.max(1, Math.round(intervalDays * 0.25));
-  const graceDays = Math.max(1, Math.round(intervalDays * 0.25));
-  const warningDays = Math.min(rawWarning, Math.max(0, intervalDays - 1));
-  return { warningDays, graceDays };
+interface SelectableOption {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
+/**
+ * 選択肢を組み立てる: 有効なものは常に表示し、無効なものは「現在選択中」の場合のみ
+ * 「(無効)」付きで表示する(新規の選択肢としては出さない、設計書レビュー指摘 #11)。
+ */
+function selectableOptions<T extends SelectableOption>(
+  items: T[],
+  currentValue: string,
+): T[] {
+  return items.filter((item) => item.isActive || item.id === currentValue);
 }
 
 export default function ChoreForm() {
   const { id } = useParams<{ id: string }>();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
-  const { timezone } = useSettings();
+  const { settings } = useSettings();
+  const { household } = useAuth();
   const { showToast } = useToast();
+
+  // レビュー指摘 #3: 設定取得前に `Asia/Tokyo` を仮置きして描画しない。
+  // `household`(ログイン時のauth-checkで確定済み)をフォールバックにし、
+  // タイムゾーンが確定するまではフォームを描画しない。
+  const timezone = settings?.household.timezone ?? household?.timezone ?? null;
 
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
@@ -63,9 +78,9 @@ export default function ChoreForm() {
     void (async () => {
       try {
         const [areaList, categoryList, resourceList] = await Promise.all([
-          listAreas(false),
-          listCategories(false),
-          listResources(false),
+          listAreas(true),
+          listCategories(true),
+          listResources(true),
         ]);
         setAreas(areaList.items);
         setCategories(categoryList.items);
@@ -102,7 +117,7 @@ export default function ChoreForm() {
     if (!graceTouched) setGraceDays(defaults.graceDays);
   };
 
-  const validate = (): string | null => {
+  const validate = (tz: string): string | null => {
     if (!name.trim()) return "家事名を入力してください。";
     if (!Number.isInteger(intervalDays) || intervalDays < 1) {
       return "推奨間隔は1以上の整数で入力してください。";
@@ -118,9 +133,9 @@ export default function ChoreForm() {
       return "猶予日数は0以上の整数で入力してください。";
     }
     if (lastCompletedAtLocal) {
-      const iso = datetimeLocalToOffsetIso(lastCompletedAtLocal, timezone);
+      const iso = datetimeLocalToOffsetIso(lastCompletedAtLocal, tz);
       if (new Date(iso).getTime() > Date.now()) {
-        return "最終実施日時は未来にできません。";
+        return "未来の日時は記録できません。";
       }
     }
     return null;
@@ -128,7 +143,8 @@ export default function ChoreForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const validationError = validate();
+    if (!timezone) return;
+    const validationError = validate(timezone);
     if (validationError) {
       setFormError(validationError);
       return;
@@ -173,14 +189,14 @@ export default function ChoreForm() {
         }
         navigate(`/chores/${result.chore.id}`);
       }
-    } catch {
-      setFormError("保存に失敗しました。");
+    } catch (err) {
+      setFormError(describeApiError(err, "保存に失敗しました。"));
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  if (loading || !timezone) {
     return (
       <>
         <PageHeader title={isEdit ? "家事を編集" : "家事を登録"} back />
@@ -197,6 +213,10 @@ export default function ChoreForm() {
       </>
     );
   }
+
+  const areaOptions = selectableOptions(areas, areaId);
+  const categoryOptions = selectableOptions(categories, categoryId);
+  const resourceOptions = selectableOptions(resources, resourceId);
 
   return (
     <>
@@ -253,9 +273,10 @@ export default function ChoreForm() {
           場所
           <select value={areaId} onChange={(e) => setAreaId(e.target.value)}>
             <option value="">未設定</option>
-            {areas.map((a) => (
+            {areaOptions.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {!a.isActive ? "(無効)" : ""}
               </option>
             ))}
           </select>
@@ -267,9 +288,10 @@ export default function ChoreForm() {
             onChange={(e) => setCategoryId(e.target.value)}
           >
             <option value="">未設定</option>
-            {categories.map((c) => (
+            {categoryOptions.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+                {!c.isActive ? "(無効)" : ""}
               </option>
             ))}
           </select>
@@ -281,9 +303,10 @@ export default function ChoreForm() {
             onChange={(e) => setResourceId(e.target.value)}
           >
             <option value="">未設定</option>
-            {resources.map((r) => (
+            {resourceOptions.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
+                {!r.isActive ? "(無効)" : ""}
               </option>
             ))}
           </select>
