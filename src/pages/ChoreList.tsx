@@ -106,9 +106,14 @@ export default function ChoreList() {
       <PageHeader
         title="家事一覧"
         actions={
-          <Link to="/chores/new" className="btn btn-primary">
-            新規登録
-          </Link>
+          <>
+            <Link to="/chores/propose" className="btn">
+              まとめて提案
+            </Link>
+            <Link to="/chores/new" className="btn btn-primary">
+              新規登録
+            </Link>
+          </>
         }
       />
       <form

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   getToday,
   listAreas,
@@ -107,7 +108,14 @@ export default function Today() {
   return (
     <>
       <PageHeader title="今日" />
-      {!hasAny && (
+      {!hasAny && data.notDueCount === 0 && (
+        <p className="empty-state">
+          まだ家事が登録されていません。
+          <br />
+          <Link to="/chores/propose">まとめて登録する</Link>
+        </p>
+      )}
+      {!hasAny && data.notDueCount > 0 && (
         <p className="empty-state">今日、急いでやる家事はありません。</p>
       )}
       {sections.map(

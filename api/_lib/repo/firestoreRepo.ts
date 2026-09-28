@@ -29,6 +29,8 @@ import {
   RepoInvalidQueryError,
   RepoNotFoundError,
 } from "./errors.js";
+import { createHash } from "node:crypto";
+import type { PushSubscriptionRecord } from "./types.js";
 
 /** 設計書 §18 の推奨初期データ(場所)。decisions.md「家庭の自動作成」で使う。 */
 const INITIAL_AREAS = [
@@ -270,6 +272,27 @@ function eventFromDoc(
   };
 }
 
+interface PushSubscriptionDoc {
+  householdId: string;
+  memberId: string;
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  createdAt: Timestamp;
+}
+function pushSubscriptionFromDoc(
+  id: string,
+  d: PushSubscriptionDoc,
+): PushSubscriptionRecord {
+  return {
+    id,
+    householdId: d.householdId,
+    memberId: d.memberId,
+    endpoint: d.endpoint,
+    keys: d.keys,
+    createdAt: d.createdAt.toDate(),
+  };
+}
+
 interface NotificationSettingsDoc {
   householdId: string;
   dailySummaryEnabled: boolean;
@@ -327,6 +350,9 @@ export class FirestoreRepo implements Repo {
   }
   private notificationSettingsCol(householdId: string) {
     return this.householdRef(householdId).collection("notificationSettings");
+  }
+  private pushSubscriptionsCol(householdId: string) {
+    return this.householdRef(householdId).collection("pushSubscriptions");
   }
 
   async getUserMembership(uid: string): Promise<UserMembership | null> {
@@ -1135,5 +1161,113 @@ export class FirestoreRepo implements Repo {
     };
     await ref.set(updated);
     return settingsFromDoc(memberId, householdId, updated);
+  }
+
+  // --- Web Push購読 ---
+
+  async upsertPushSubscription(
+    householdId: string,
+    memberId: string,
+    sub: { endpoint: string; keys: { p256dh: string; auth: string } },
+  ): Promise<PushSubscriptionRecord> {
+    const id = createHash("sha256").update(sub.endpoint).digest("hex");
+    const doc: PushSubscriptionDoc = {
+      householdId,
+      memberId,
+      endpoint: sub.endpoint,
+      keys: sub.keys,
+      createdAt: Timestamp.now(),
+    };
+    await this.pushSubscriptionsCol(householdId).doc(id).set(doc);
+    return pushSubscriptionFromDoc(id, doc);
+  }
+
+  async deletePushSubscriptionByEndpoint(
+    householdId: string,
+    memberId: string,
+    endpoint: string,
+  ): Promise<void> {
+    const id = createHash("sha256").update(endpoint).digest("hex");
+    const ref = this.pushSubscriptionsCol(householdId).doc(id);
+    const snap = await ref.get();
+    if (snap.exists && (snap.data() as PushSubscriptionDoc).memberId === memberId) {
+      await ref.delete();
+    }
+  }
+
+  async deletePushSubscriptionById(
+    householdId: string,
+    id: string,
+  ): Promise<void> {
+    await this.pushSubscriptionsCol(householdId).doc(id).delete();
+  }
+
+  async listPushSubscriptionsForMember(
+    householdId: string,
+    memberId: string,
+  ): Promise<PushSubscriptionRecord[]> {
+    const snap = await this.pushSubscriptionsCol(householdId)
+      .where("memberId", "==", memberId)
+      .get();
+    return snap.docs.map((doc) =>
+      pushSubscriptionFromDoc(doc.id, doc.data() as PushSubscriptionDoc),
+    );
+  }
+
+  // --- 朝のまとめ通知(cron) ---
+
+  async listHouseholds(): Promise<Household[]> {
+    const snap = await this.db.collection("households").get();
+    return snap.docs.map((doc) =>
+      householdFromDoc(doc.id, doc.data() as HouseholdDoc),
+    );
+  }
+
+  async listActiveMembersWithNotificationSettings(
+    householdId: string,
+  ): Promise<Array<{ member: Member; settings: NotificationSettings }>> {
+    const members = await this.listMembers(householdId);
+    const active = members.filter((m) => m.isActive);
+    return Promise.all(
+      active.map(async (member) => {
+        const settings =
+          (await this.getNotificationSettings(householdId, member.id)) ?? {
+            memberId: member.id,
+            householdId,
+            dailySummaryEnabled: true,
+            dailySummaryTime: "08:00",
+            includeUpcoming: false,
+            oneTapComplete: true,
+            lastSentLocalDate: null,
+            updatedAt: new Date(),
+          };
+        return { member, settings };
+      }),
+    );
+  }
+
+  async claimDailySummarySlot(
+    householdId: string,
+    memberId: string,
+    localDate: string,
+  ): Promise<boolean> {
+    const ref = this.notificationSettingsCol(householdId).doc(memberId);
+    return this.db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const base: NotificationSettingsDoc = snap.exists
+        ? (snap.data() as NotificationSettingsDoc)
+        : {
+            householdId,
+            dailySummaryEnabled: true,
+            dailySummaryTime: "08:00",
+            includeUpcoming: false,
+            oneTapComplete: true,
+            lastSentLocalDate: null,
+            updatedAt: Timestamp.now(),
+          };
+      if (base.lastSentLocalDate === localDate) return false;
+      tx.set(ref, { ...base, lastSentLocalDate: localDate, updatedAt: Timestamp.now() });
+      return true;
+    });
   }
 }

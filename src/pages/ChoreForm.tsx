@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  aiChoreSuggestion,
   createChore,
   getChore,
   listAreas,
@@ -57,6 +58,7 @@ export default function ChoreForm() {
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
   const [areas, setAreas] = useState<AreaDto[]>([]);
   const [categories, setCategories] = useState<CategoryDto[]>([]);
@@ -115,6 +117,36 @@ export default function ChoreForm() {
     const defaults = defaultWarningGrace(value);
     if (!warningTouched) setWarningDays(defaults.warningDays);
     if (!graceTouched) setGraceDays(defaults.graceDays);
+  };
+
+  /**
+   * AIで候補を出す(decisions.md「家庭登録アシスト」)。結果はフォームへ反映するだけで、
+   * 保存は利用者が行う(自動保存しない)。予告/猶予はAIの推奨間隔に対して
+   * §7.6 の式でサーバーが計算した値をそのまま採用し、以後は自動追従しない
+   * (利用者が保存前に調整できるよう touched 扱いにする)。
+   */
+  const handleAiSuggest = async () => {
+    if (!name.trim()) return;
+    setFormError(null);
+    setAiLoading(true);
+    try {
+      const suggestion = await aiChoreSuggestion(name.trim());
+      setIntervalDays(suggestion.intervalDays);
+      setWarningDays(suggestion.warningDays);
+      setGraceDays(suggestion.graceDays);
+      setWarningTouched(true);
+      setGraceTouched(true);
+      if (suggestion.areaId) setAreaId(suggestion.areaId);
+      if (suggestion.categoryId) setCategoryId(suggestion.categoryId);
+      if (suggestion.description) setDescription(suggestion.description);
+      showToast({
+        message: "AIの候補を反映しました。確認して保存してください。",
+      });
+    } catch (err) {
+      setFormError(describeApiError(err, "AIの候補取得に失敗しました。"));
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   const validate = (tz: string): string | null => {
@@ -232,6 +264,16 @@ export default function ChoreForm() {
             onChange={(e) => setName(e.target.value)}
           />
         </label>
+        <div className="form-actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={!name.trim() || aiLoading}
+            onClick={() => void handleAiSuggest()}
+          >
+            {aiLoading ? "AI候補を取得中..." : "AIで候補を出す"}
+          </button>
+        </div>
         <label className="form-field">
           推奨間隔(日)<span aria-hidden="true">*</span>
           <input

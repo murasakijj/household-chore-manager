@@ -227,4 +227,65 @@ describe("FirestoreRepo(Firestoreエミュレータ)", () => {
     const events2 = await repo.listChoreEventsForChore(householdId, created[1].id, {});
     expect(events2.items).toHaveLength(0);
   });
+
+  it("Web Push購読の登録・一覧・削除(バッチ3)", async () => {
+    const repo = new FirestoreRepo();
+    const membership = await repo.bootstrapHouseholdForUser({
+      uid: `emu-uid-${randomUUID()}`,
+      email: `emu-${randomUUID()}@example.com`,
+    });
+    const { householdId, memberId } = membership;
+
+    await repo.upsertPushSubscription(householdId, memberId, {
+      endpoint: "https://push.example.com/emu-1",
+      keys: { p256dh: "p256dh-value", auth: "auth-value" },
+    });
+    const list = await repo.listPushSubscriptionsForMember(householdId, memberId);
+    expect(list).toHaveLength(1);
+    expect(list[0].endpoint).toBe("https://push.example.com/emu-1");
+
+    await repo.deletePushSubscriptionByEndpoint(
+      householdId,
+      memberId,
+      "https://push.example.com/emu-1",
+    );
+    const afterDelete = await repo.listPushSubscriptionsForMember(householdId, memberId);
+    expect(afterDelete).toHaveLength(0);
+  });
+
+  it("claimDailySummarySlotは同じlocalDateで一度しか確保できない(二重起動対策)", async () => {
+    const repo = new FirestoreRepo();
+    const membership = await repo.bootstrapHouseholdForUser({
+      uid: `emu-uid-${randomUUID()}`,
+      email: `emu-${randomUUID()}@example.com`,
+    });
+    const { householdId, memberId } = membership;
+
+    const first = await repo.claimDailySummarySlot(householdId, memberId, "2026-03-01");
+    expect(first).toBe(true);
+    const second = await repo.claimDailySummarySlot(householdId, memberId, "2026-03-01");
+    expect(second).toBe(false);
+    const nextDay = await repo.claimDailySummarySlot(householdId, memberId, "2026-03-02");
+    expect(nextDay).toBe(true);
+
+    const settings = await repo.getNotificationSettings(householdId, memberId);
+    expect(settings?.lastSentLocalDate).toBe("2026-03-02");
+  });
+
+  it("listHouseholds/listActiveMembersWithNotificationSettingsが動く", async () => {
+    const repo = new FirestoreRepo();
+    const membership = await repo.bootstrapHouseholdForUser({
+      uid: `emu-uid-${randomUUID()}`,
+      email: `emu-${randomUUID()}@example.com`,
+    });
+    const { householdId, memberId } = membership;
+
+    const households = await repo.listHouseholds();
+    expect(households.some((h) => h.id === householdId)).toBe(true);
+
+    const entries = await repo.listActiveMembersWithNotificationSettings(householdId);
+    expect(entries.some((e) => e.member.id === memberId)).toBe(true);
+    const entry = entries.find((e) => e.member.id === memberId);
+    expect(entry?.settings.dailySummaryEnabled).toBe(true);
+  });
 });

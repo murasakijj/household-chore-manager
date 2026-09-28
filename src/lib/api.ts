@@ -193,6 +193,25 @@ export interface InitialChoreTemplate {
   intervalDays: number;
 }
 
+export interface AiChoreSuggestion {
+  areaId: string | null;
+  categoryId: string | null;
+  intervalDays: number;
+  warningDays: number;
+  graceDays: number;
+  description: string | null;
+}
+
+export interface AiChoreProposalItem extends AiChoreSuggestion {
+  name: string;
+  alreadyExists: boolean;
+}
+
+export interface PushSubscriptionJson {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
 // --- HTTPクライアント本体 ---
 
 export class ApiError extends Error {
@@ -427,4 +446,36 @@ export async function getInitialChoreTemplates(): Promise<{
   items: InitialChoreTemplate[];
 }> {
   return request("GET", "templates/initial-chores");
+}
+
+export async function bulkCreateChores(
+  items: ChoreCreateInput[],
+): Promise<{ created: ChoreDto[]; warnings: Array<{ index: number; warnings: string[] }> }> {
+  return request("POST", "chores/bulk", { body: { items } });
+}
+
+export async function aiChoreSuggestion(
+  name: string,
+): Promise<AiChoreSuggestion> {
+  return request("POST", "ai/chore-suggestion", { body: { name } });
+}
+
+export async function aiChoreListProposal(
+  context: string,
+): Promise<{ items: AiChoreProposalItem[] }> {
+  return request("POST", "ai/chore-list-proposal", { body: { context } });
+}
+
+export async function subscribePush(
+  subscription: PushSubscriptionJson,
+): Promise<void> {
+  await request("POST", "push/subscriptions", { body: subscription });
+}
+
+export async function unsubscribePush(endpoint: string): Promise<void> {
+  await request("DELETE", "push/subscriptions", { body: { endpoint } });
+}
+
+export async function sendTestPush(): Promise<{ sent: number; removed: number }> {
+  return request("POST", "push/test");
 }

@@ -15,6 +15,7 @@ import Today from "./pages/Today";
 import ChoreList from "./pages/ChoreList";
 import ChoreDetail from "./pages/ChoreDetail";
 import ChoreForm from "./pages/ChoreForm";
+import ChorePropose from "./pages/ChorePropose";
 import ChoreRecord from "./pages/ChoreRecord";
 import History from "./pages/History";
 import Settings from "./pages/Settings";
@@ -45,6 +46,7 @@ function App() {
               <Route path="/" element={<Today />} />
               <Route path="/chores" element={<ChoreList />} />
               <Route path="/chores/new" element={<ChoreForm />} />
+              <Route path="/chores/propose" element={<ChorePropose />} />
               <Route path="/chores/:id" element={<ChoreDetail />} />
               <Route path="/chores/:id/edit" element={<ChoreForm />} />
               <Route path="/chores/:id/record" element={<ChoreRecord />} />

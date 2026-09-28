@@ -25,6 +25,21 @@ export function describeApiError(err: unknown, fallback: string): string {
     if (err.code === "invalid_timezone") {
       return "タイムゾーンの指定が正しくありません。";
     }
+    if (err.code === "rate_limited") {
+      return "AIが混み合っています。しばらくしてから試してください。";
+    }
+    if (err.code === "overloaded") {
+      return "AIサービスが混み合っています。しばらくしてから試してください。";
+    }
+    if (err.code === "upstream_error" || err.code === "invalid_ai_output") {
+      return "AIからの応答を取得できませんでした。時間を置いて試してください。";
+    }
+    if (err.code === "ai_not_configured") {
+      return "AI機能が設定されていません(管理者にお問い合わせください)。";
+    }
+    if (err.code === "push_not_configured") {
+      return "通知機能が設定されていません(管理者にお問い合わせください)。";
+    }
   }
   return fallback;
 }

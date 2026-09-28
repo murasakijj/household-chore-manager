@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AddChoreEventParams,
   AddChoreEventResult,
@@ -12,6 +12,7 @@ import type {
   Member,
   NotificationSettings,
   Page,
+  PushSubscriptionRecord,
   Repo,
   Resource,
   ResourceType,
@@ -74,6 +75,7 @@ export class MemoryRepo implements Repo {
   private chores = new Map<string, Chore>();
   private events = new Map<string, ChoreEvent>();
   private notificationSettings = new Map<string, NotificationSettings>();
+  private pushSubscriptions = new Map<string, PushSubscriptionRecord>();
 
   async getUserMembership(uid: string): Promise<UserMembership | null> {
     return this.memberships.get(uid) ?? null;
@@ -607,6 +609,96 @@ export class MemoryRepo implements Repo {
     };
     this.notificationSettings.set(key(householdId, memberId), updated);
     return updated;
+  }
+
+  // --- Web Push購読 ---
+
+  async upsertPushSubscription(
+    householdId: string,
+    memberId: string,
+    sub: { endpoint: string; keys: { p256dh: string; auth: string } },
+  ): Promise<PushSubscriptionRecord> {
+    const id = createHash("sha256").update(sub.endpoint).digest("hex");
+    const record: PushSubscriptionRecord = {
+      id,
+      householdId,
+      memberId,
+      endpoint: sub.endpoint,
+      keys: sub.keys,
+      createdAt: new Date(),
+    };
+    this.pushSubscriptions.set(key(householdId, id), record);
+    return record;
+  }
+
+  async deletePushSubscriptionByEndpoint(
+    householdId: string,
+    memberId: string,
+    endpoint: string,
+  ): Promise<void> {
+    const id = createHash("sha256").update(endpoint).digest("hex");
+    const existing = this.pushSubscriptions.get(key(householdId, id));
+    if (existing && existing.memberId === memberId) {
+      this.pushSubscriptions.delete(key(householdId, id));
+    }
+  }
+
+  async deletePushSubscriptionById(
+    householdId: string,
+    id: string,
+  ): Promise<void> {
+    this.pushSubscriptions.delete(key(householdId, id));
+  }
+
+  async listPushSubscriptionsForMember(
+    householdId: string,
+    memberId: string,
+  ): Promise<PushSubscriptionRecord[]> {
+    return [...this.pushSubscriptions.values()].filter(
+      (s) => s.householdId === householdId && s.memberId === memberId,
+    );
+  }
+
+  // --- 朝のまとめ通知(cron) ---
+
+  async listHouseholds(): Promise<Household[]> {
+    return [...this.households.values()];
+  }
+
+  async listActiveMembersWithNotificationSettings(
+    householdId: string,
+  ): Promise<Array<{ member: Member; settings: NotificationSettings }>> {
+    const members = await this.listMembers(householdId);
+    return members
+      .filter((m) => m.isActive)
+      .map((member) => {
+        const settings = this.notificationSettings.get(
+          key(householdId, member.id),
+        ) ?? {
+          memberId: member.id,
+          householdId,
+          dailySummaryEnabled: true,
+          dailySummaryTime: "08:00",
+          includeUpcoming: false,
+          oneTapComplete: true,
+          lastSentLocalDate: null,
+          updatedAt: new Date(),
+        };
+        return { member, settings };
+      });
+  }
+
+  async claimDailySummarySlot(
+    householdId: string,
+    memberId: string,
+    localDate: string,
+  ): Promise<boolean> {
+    const current = await this.getNotificationSettings(householdId, memberId);
+    if (current?.lastSentLocalDate === localDate) return false;
+    await this.upsertNotificationSettings(householdId, memberId, {
+      lastSentLocalDate: localDate,
+    });
+    return true;
   }
 
   // --- ヘルパー ---

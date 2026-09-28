@@ -15,6 +15,21 @@ vi.mock("firebase-admin/auth", () => ({
   getAuth: () => ({ verifyIdToken }),
 }));
 
+// AIプロバイダ・Web Pushはネットワークを叩かず、呼び出しだけ記録するダブルにする。
+const generateJson = vi.fn();
+vi.mock("./ai/index.js", async () => {
+  const actual = await vi.importActual<typeof import("./ai/index.js")>("./ai/index.js");
+  return { ...actual, getAiProvider: () => ({ generateJson }) };
+});
+
+const sendNotification = vi.fn();
+vi.mock("web-push", () => ({
+  default: {
+    setVapidDetails: vi.fn(),
+    sendNotification: (...args: unknown[]) => sendNotification(...args),
+  },
+}));
+
 const { createRouter } = await import("../router.js");
 const { MemoryRepo } = await import("./repo/memoryRepo.js");
 
@@ -68,6 +83,7 @@ function createRequest(
     user?: "u1" | "u2";
     body?: unknown;
     query?: Record<string, string>;
+    authorization?: string;
   } = {},
 ): ApiRequest {
   const query = opts.query
@@ -76,6 +92,7 @@ function createRequest(
   const url = `/api/router?__path=${encodeURIComponent(path)}${query}`;
   const headers: Record<string, string> = {};
   if (opts.user) headers.authorization = `Bearer ${tokenFor(opts.user)}`;
+  if (opts.authorization !== undefined) headers.authorization = opts.authorization;
   return {
     method,
     url,
@@ -92,7 +109,12 @@ let handler: ReturnType<typeof createRouter>;
 async function call(
   method: string,
   path: string,
-  opts?: { user?: "u1" | "u2"; body?: unknown; query?: Record<string, string> },
+  opts?: {
+    user?: "u1" | "u2";
+    body?: unknown;
+    query?: Record<string, string>;
+    authorization?: string;
+  },
 ): Promise<CapturedResponse> {
   const req = createRequest(method, path, opts);
   const { res, result } = createResponse();
@@ -110,6 +132,13 @@ beforeEach(() => {
     return Promise.reject(new Error("unknown token"));
   });
   process.env.ALLOWED_EMAILS = `${emailFor("u1")}, ${emailFor("u2")}`;
+  process.env.VAPID_PUBLIC_KEY = "test-public-key";
+  process.env.VAPID_PRIVATE_KEY = "test-private-key";
+  process.env.VAPID_SUBJECT = "mailto:test@example.com";
+  process.env.CRON_SECRET = "test-cron-secret";
+  generateJson.mockReset();
+  sendNotification.mockReset();
+  sendNotification.mockResolvedValue(undefined);
   repo = new MemoryRepo();
   handler = createRouter(() => repo);
 });
@@ -504,5 +533,240 @@ describe("結合テスト(設計書 §16.2, インメモリリポジトリ + サ
     await call("POST", `chore-events/${recentEventId}/void`, { user: "u1" });
     const afterVoid = await call("GET", `chores/${choreId}`, { user: "u1" });
     expect((afterVoid.body as { status: string }).status).toBe("overdue");
+  });
+});
+
+describe("AIルート", () => {
+  it("家事登録アシスト: 場所・カテゴリ名をIDへ解決する", async () => {
+    const areas = await call("GET", "areas", { user: "u1" });
+    const areaName = (areas.body as { items: Array<{ name: string }> }).items[0]
+      .name;
+    generateJson.mockResolvedValue({
+      areaName,
+      categoryName: null,
+      intervalDays: 14,
+      description: null,
+    });
+
+    const res = await call("POST", "ai/chore-suggestion", {
+      user: "u1",
+      body: { name: "掃除機をかける" },
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { areaId: string; intervalDays: number };
+    expect(body.areaId).toBeTruthy();
+    expect(body.intervalDays).toBe(14);
+  });
+
+  it("AIプロバイダがエラーを返すと502", async () => {
+    const { AiProviderError } = await import("./ai/index.js");
+    generateJson.mockRejectedValue(new AiProviderError(502, "overloaded"));
+
+    const res = await call("POST", "ai/chore-suggestion", {
+      user: "u1",
+      body: { name: "掃除機をかける" },
+    });
+    expect(res.status).toBe(502);
+    expect((res.body as { error: string }).error).toBe("overloaded");
+  });
+
+  it("一括提案: 既存と同名の項目に alreadyExists:true を付ける", async () => {
+    await call("POST", "chores", {
+      user: "u1",
+      body: { name: "掃除機をかける", intervalDays: 3 },
+    });
+    generateJson.mockResolvedValue({
+      items: [
+        { name: "掃除機をかける", areaName: null, categoryName: null, intervalDays: 3, description: null },
+        { name: "新しい家事", areaName: null, categoryName: null, intervalDays: 7, description: null },
+      ],
+    });
+
+    const res = await call("POST", "ai/chore-list-proposal", {
+      user: "u1",
+      body: { context: "犬がいる家庭" },
+    });
+    expect(res.status).toBe(200);
+    const items = (res.body as { items: Array<{ name: string; alreadyExists: boolean }> })
+      .items;
+    expect(items.find((i) => i.name === "掃除機をかける")?.alreadyExists).toBe(true);
+    expect(items.find((i) => i.name === "新しい家事")?.alreadyExists).toBe(false);
+  });
+});
+
+describe("Push購読ルート", () => {
+  it("登録・テスト送信・解除ができる", async () => {
+    const subscribeRes = await call("POST", "push/subscriptions", {
+      user: "u1",
+      body: {
+        endpoint: "https://push.example.com/abc",
+        keys: { p256dh: "p256dh-value", auth: "auth-value" },
+      },
+    });
+    expect(subscribeRes.status).toBe(201);
+
+    const testRes = await call("POST", "push/test", { user: "u1" });
+    expect(testRes.status).toBe(200);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect((testRes.body as { sent: number }).sent).toBe(1);
+
+    const deleteRes = await call("DELETE", "push/subscriptions", {
+      user: "u1",
+      body: { endpoint: "https://push.example.com/abc" },
+    });
+    expect(deleteRes.status).toBe(200);
+
+    const testAfterDelete = await call("POST", "push/test", { user: "u1" });
+    expect((testAfterDelete.body as { sent: number }).sent).toBe(0);
+  });
+
+  it("404/410応答なら購読を自動削除する", async () => {
+    await call("POST", "push/subscriptions", {
+      user: "u1",
+      body: {
+        endpoint: "https://push.example.com/gone",
+        keys: { p256dh: "p256dh-value", auth: "auth-value" },
+      },
+    });
+    sendNotification.mockRejectedValueOnce(Object.assign(new Error("gone"), { statusCode: 410 }));
+
+    const res = await call("POST", "push/test", { user: "u1" });
+    expect(res.status).toBe(200);
+    expect((res.body as { sent: number; removed: number }).removed).toBe(1);
+  });
+});
+
+describe("cron: /api/cron/daily-summary", () => {
+  it("CRON_SECRET不一致で401", async () => {
+    const res = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer wrong-secret",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("CRON_SECRET未設定なら常に拒否する", async () => {
+    delete process.env.CRON_SECRET;
+    const res = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("通知時刻前は送らない", async () => {
+    await call("POST", "chores", { user: "u1", body: { name: "掃除", intervalDays: 1 } });
+    await call("PATCH", "settings", {
+      user: "u1",
+      body: { dailySummaryTime: "23:59" },
+    });
+
+    const res = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect(res.status).toBe(200);
+    expect((res.body as { notificationsSent: number }).notificationsSent).toBe(0);
+    expect(sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("対象0件のときは送らないがlastSentLocalDateは更新され、再実行しても二重送信しない", async () => {
+    await call("POST", "chores", { user: "u1", body: { name: "最近やった家事", intervalDays: 30 } });
+    await call("PATCH", "settings", {
+      user: "u1",
+      body: { dailySummaryTime: "00:00" },
+    });
+
+    const first = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect(first.status).toBe(200);
+    expect((first.body as { notificationsSent: number }).notificationsSent).toBe(0);
+    expect(sendNotification).not.toHaveBeenCalled();
+
+    const second = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect((second.body as { notificationsSent: number }).notificationsSent).toBe(0);
+  });
+
+  it("overdueな家事があれば送信し、再実行しても二重送信しない", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "優先度高い家事", intervalDays: 3, warningDays: 1, graceDays: 1 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+    const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+    await call("POST", `chores/${choreId}/events`, {
+      user: "u1",
+      body: { clientRequestId: "55555555-6666-7777-8888-999999999999", occurredAt: old },
+    });
+    await call("PATCH", "settings", {
+      user: "u1",
+      body: { dailySummaryTime: "00:00" },
+    });
+    await call("POST", "push/subscriptions", {
+      user: "u1",
+      body: {
+        endpoint: "https://push.example.com/summary",
+        keys: { p256dh: "p256dh-value", auth: "auth-value" },
+      },
+    });
+
+    const first = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect((first.body as { notificationsSent: number }).notificationsSent).toBe(1);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+
+    const second = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect((second.body as { notificationsSent: number }).notificationsSent).toBe(0);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("無効化した家事・取消済み履歴は対象外", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "無効化する家事", intervalDays: 1 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+    await call("PATCH", `chores/${choreId}`, { user: "u1", body: { isActive: false } });
+    await call("PATCH", "settings", {
+      user: "u1",
+      body: { dailySummaryTime: "00:00" },
+    });
+
+    const res = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect((res.body as { notificationsSent: number }).notificationsSent).toBe(0);
+  });
+
+  it("includeUpcomingがtrueなら upcoming も対象になる", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "そろそろ家事", intervalDays: 10, warningDays: 5, graceDays: 3 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+    const sixDaysAgo = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString();
+    await call("POST", `chores/${choreId}/events`, {
+      user: "u1",
+      body: { clientRequestId: "66666666-7777-8888-9999-aaaaaaaaaaaa", occurredAt: sixDaysAgo },
+    });
+    await call("PATCH", "settings", {
+      user: "u1",
+      body: { dailySummaryTime: "00:00", includeUpcoming: true },
+    });
+    await call("POST", "push/subscriptions", {
+      user: "u1",
+      body: {
+        endpoint: "https://push.example.com/upcoming",
+        keys: { p256dh: "p256dh-value", auth: "auth-value" },
+      },
+    });
+
+    const res = await call("POST", "cron/daily-summary", {
+      authorization: "Bearer test-cron-secret",
+    });
+    expect((res.body as { notificationsSent: number }).notificationsSent).toBe(1);
   });
 });

@@ -1,12 +1,28 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { patchSettings } from "../lib/api";
+import { patchSettings, sendTestPush } from "../lib/api";
 import { useAuth } from "../contexts/useAuth";
 import { useSettings } from "../contexts/useSettings";
 import { useToast } from "../contexts/useToast";
 import { describeApiError } from "../lib/errorMessages";
+import {
+  disablePush,
+  enablePush,
+  getPushStatus,
+  type PushSupportStatus,
+} from "../lib/push";
 import PageHeader from "../components/PageHeader";
 import Skeleton from "../components/Skeleton";
+
+const PUSH_STATUS_LABEL: Record<PushSupportStatus, string> = {
+  unsupported: "この端末・ブラウザは通知に対応していません。",
+  ios_needs_home_screen:
+    "iPhoneで通知を受け取るには、このアプリをホーム画面に追加してから開き直してください(共有ボタン→「ホーム画面に追加」)。",
+  denied:
+    "通知がブロックされています。ブラウザの設定からこのサイトの通知を許可してください。",
+  not_subscribed: "この端末では通知を受け取っていません。",
+  subscribed: "この端末で通知を受け取っています。",
+};
 
 const COMMON_TIMEZONES = [
   "Asia/Tokyo",
@@ -44,6 +60,71 @@ export default function Settings() {
   const [oneTapComplete, setOneTapComplete] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [pushStatus, setPushStatus] = useState<PushSupportStatus | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+
+  const refreshPushStatus = useCallback(() => {
+    void getPushStatus().then(setPushStatus);
+  }, []);
+
+  useEffect(() => {
+    refreshPushStatus();
+  }, [refreshPushStatus]);
+
+  const handleEnablePush = async () => {
+    setPushError(null);
+    setPushBusy(true);
+    try {
+      await enablePush();
+      refreshPushStatus();
+      showToast({ message: "この端末で通知を受け取るようにしました。" });
+    } catch (err) {
+      if (err instanceof Error && err.message === "permission_denied") {
+        setPushError("通知が許可されませんでした。");
+      } else {
+        setPushError(describeApiError(err, "通知の設定に失敗しました。"));
+      }
+    } finally {
+      setPushBusy(false);
+      refreshPushStatus();
+    }
+  };
+
+  const handleDisablePush = async () => {
+    setPushError(null);
+    setPushBusy(true);
+    try {
+      await disablePush();
+      showToast({ message: "この端末の通知を解除しました。" });
+    } catch (err) {
+      setPushError(describeApiError(err, "解除に失敗しました。"));
+    } finally {
+      setPushBusy(false);
+      refreshPushStatus();
+    }
+  };
+
+  const handleTestPush = async () => {
+    setPushError(null);
+    setPushBusy(true);
+    try {
+      const result = await sendTestPush();
+      if (result.sent > 0) {
+        showToast({ message: "テスト通知を送信しました。" });
+      } else {
+        showToast({
+          message: "送信先の購読がありません。先に通知を有効にしてください。",
+          tone: "warning",
+        });
+      }
+    } catch (err) {
+      setPushError(describeApiError(err, "テスト通知の送信に失敗しました。"));
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!settings) return;
@@ -169,6 +250,44 @@ export default function Settings() {
           </button>
         </div>
       </form>
+
+      <section className="detail-block">
+        <h2>この端末の通知</h2>
+        <p>{pushStatus ? PUSH_STATUS_LABEL[pushStatus] : "確認中..."}</p>
+        {pushError && <p role="alert">{pushError}</p>}
+        <div className="form-actions">
+          {pushStatus === "not_subscribed" && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={pushBusy}
+              onClick={() => void handleEnablePush()}
+            >
+              この端末で通知を受け取る
+            </button>
+          )}
+          {pushStatus === "subscribed" && (
+            <>
+              <button
+                type="button"
+                className="btn"
+                disabled={pushBusy}
+                onClick={() => void handleTestPush()}
+              >
+                テスト通知を送る
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={pushBusy}
+                onClick={() => void handleDisablePush()}
+              >
+                解除
+              </button>
+            </>
+          )}
+        </div>
+      </section>
 
       <section className="detail-block">
         <h2>マスタ管理</h2>

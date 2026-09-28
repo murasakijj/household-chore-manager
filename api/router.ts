@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { ApiRequest, ApiResponse } from "./_lib/types.js";
 import { requireAuth, AuthError } from "./_lib/auth.js";
 import { sendJson, readJsonBody, parseQuery } from "./_lib/http.js";
@@ -38,6 +39,13 @@ import {
 } from "./_lib/routes/settings.js";
 import { listMembersRoute } from "./_lib/routes/members.js";
 import { getInitialChoreTemplates } from "./_lib/routes/templates.js";
+import { aiChoreListProposal, aiChoreSuggestion } from "./_lib/routes/ai.js";
+import {
+  createPushSubscription,
+  deletePushSubscription,
+  sendTestPush,
+} from "./_lib/routes/push.js";
+import { dailySummaryCron } from "./_lib/routes/cron.js";
 
 /**
  * `req.url`(または `__path` クエリ)から `/api/` 配下のパスを取り出す。
@@ -65,6 +73,28 @@ function resolveQuery(req: ApiRequest): URLSearchParams {
       : new URLSearchParams(url.slice(idx + 1));
   params.delete("__path");
   return params;
+}
+
+/**
+ * `Authorization: Bearer $CRON_SECRET` を定数時間比較で検証する。
+ * `CRON_SECRET` が未設定の場合は常に拒否する(architecture.md セキュリティチェックリスト)。
+ */
+function verifyCronSecret(
+  authorizationHeader: string | string[] | undefined,
+): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+
+  const header = Array.isArray(authorizationHeader)
+    ? authorizationHeader[0]
+    : authorizationHeader;
+  if (!header?.startsWith("Bearer ")) return false;
+  const token = header.slice("Bearer ".length).trim();
+
+  const expected = Buffer.from(secret);
+  const actual = Buffer.from(token);
+  if (expected.length !== actual.length) return false;
+  return timingSafeEqual(expected, actual);
 }
 
 type Dispatch = (
@@ -170,6 +200,31 @@ function matchRoute(method: string, segments: string[]): Dispatch | null {
     return () => getInitialChoreTemplates();
   }
 
+  if (s0 === "ai" && segments.length === 2 && method === "POST") {
+    if (s1 === "chore-suggestion") {
+      return (ctx, _req, _query, body) => aiChoreSuggestion(ctx, body);
+    }
+    if (s1 === "chore-list-proposal") {
+      return (ctx, _req, _query, body) => aiChoreListProposal(ctx, body);
+    }
+  }
+
+  if (s0 === "push" && s1 === "subscriptions" && segments.length === 2) {
+    if (method === "POST")
+      return (ctx, _req, _query, body) => createPushSubscription(ctx, body);
+    if (method === "DELETE")
+      return (ctx, _req, _query, body) => deletePushSubscription(ctx, body);
+  }
+
+  if (
+    s0 === "push" &&
+    s1 === "test" &&
+    segments.length === 2 &&
+    method === "POST"
+  ) {
+    return (ctx) => sendTestPush(ctx);
+  }
+
   return null;
 }
 
@@ -188,10 +243,22 @@ export function createRouter(repoFactory: () => Repo) {
       const method = req.method ?? "GET";
 
       // cron は requireAuth(Firebase IDトークン)を通さない(設計書 §11.4の例外、
-      // architecture.md)。CRON_SECRET 検証はバッチ3で実装する。
-      // TODO(batch3): Authorization: Bearer $CRON_SECRET を定数時間比較で検証し、
-      // /api/cron/daily-summary を実装する。それまでは未実装として404を返す。
+      // architecture.md)。代わりに CRON_SECRET を定数時間比較で検証する。
       if (segments[0] === "cron") {
+        if (
+          segments.length === 2 &&
+          segments[1] === "daily-summary" &&
+          (method === "GET" || method === "POST")
+        ) {
+          if (!verifyCronSecret(req.headers.authorization)) {
+            sendJson(res, 401, { error: "unauthorized" });
+            return;
+          }
+          const repo: Repo = repoFactory();
+          const result = await dailySummaryCron(repo, new Date());
+          sendJson(res, 200, result);
+          return;
+        }
         sendJson(res, 404, { error: "not_found" });
         return;
       }
@@ -219,7 +286,7 @@ export function createRouter(repoFactory: () => Repo) {
 
       const query = resolveQuery(req);
       const body =
-        method === "POST" || method === "PATCH"
+        method === "POST" || method === "PATCH" || method === "DELETE"
           ? await readJsonBody(req)
           : undefined;
 

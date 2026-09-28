@@ -100,6 +100,16 @@ export interface ChoreEvent {
   createdAt: Date;
 }
 
+export interface PushSubscriptionRecord {
+  /** `sha256(endpoint)` をIDとして使う(architecture.md)。 */
+  id: string;
+  householdId: string;
+  memberId: string;
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  createdAt: Date;
+}
+
 export interface NotificationSettings {
   memberId: string;
   householdId: string;
@@ -321,4 +331,40 @@ export interface Repo {
       >
     >,
   ): Promise<NotificationSettings>;
+
+  // --- Web Push購読 ---
+  /** 同じ `endpoint`(= id)なら上書きする(ブラウザの再購読)。 */
+  upsertPushSubscription(
+    householdId: string,
+    memberId: string,
+    sub: { endpoint: string; keys: { p256dh: string; auth: string } },
+  ): Promise<PushSubscriptionRecord>;
+  deletePushSubscriptionByEndpoint(
+    householdId: string,
+    memberId: string,
+    endpoint: string,
+  ): Promise<void>;
+  /** 404/410応答時の購読削除に使う(architecture.md「朝のまとめ通知ジョブ」)。 */
+  deletePushSubscriptionById(householdId: string, id: string): Promise<void>;
+  listPushSubscriptionsForMember(
+    householdId: string,
+    memberId: string,
+  ): Promise<PushSubscriptionRecord[]>;
+
+  // --- 朝のまとめ通知(cron) ---
+  listHouseholds(): Promise<Household[]>;
+  /** 家庭内の有効なメンバーと、その通知設定(無ければ既定値)を一括取得する。 */
+  listActiveMembersWithNotificationSettings(
+    householdId: string,
+  ): Promise<Array<{ member: Member; settings: NotificationSettings }>>;
+  /**
+   * その日まだ送っていなければ `lastSentLocalDate` を `localDate` に更新して
+   * `true` を返す(トランザクションで「未送信なら確保してから送る」。二重起動対策)。
+   * 既に送信済み(`lastSentLocalDate === localDate`)なら何もせず `false` を返す。
+   */
+  claimDailySummarySlot(
+    householdId: string,
+    memberId: string,
+    localDate: string,
+  ): Promise<boolean>;
 }

@@ -146,6 +146,19 @@ export const settingsPatchSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, { message: "empty_patch" });
 
+/** `PushSubscriptionJSON`(ブラウザの `PushSubscription.toJSON()`)。 */
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(2000),
+  keys: z.object({
+    p256dh: z.string().min(1).max(500),
+    auth: z.string().min(1).max(500),
+  }),
+});
+
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().url().max(2000),
+});
+
 // --- クエリパラメータ(一覧・絞り込み系) ---
 
 /** `limit` クエリ: 文字列を数値化し、既定50・最大100 の範囲に収める。 */
