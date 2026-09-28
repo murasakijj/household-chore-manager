@@ -255,6 +255,20 @@ export interface Repo {
       "id" | "householdId" | "createdAt" | "updatedAt" | "lastCompletedAt"
     > & { lastCompletedAt?: Date | null },
   ): Promise<Chore>;
+  /**
+   * `/api/chores/bulk`: 複数件を1回の書き込みでまとめて作成する(設計書レビュー指摘 #7)。
+   * 呼び出し側(サービス層)が参照・間隔の検証を全件先に済ませてから呼ぶこと。
+   * `lastCompletedAt` を指定した項目は、家事作成と初回イベント追加を同じ書き込み単位で行う。
+   */
+  createChoresBulk(
+    householdId: string,
+    items: Array<
+      Omit<
+        Chore,
+        "id" | "householdId" | "createdAt" | "updatedAt" | "lastCompletedAt"
+      > & { lastCompletedAt?: Date | null }
+    >,
+  ): Promise<Chore[]>;
   updateChore(
     householdId: string,
     id: string,

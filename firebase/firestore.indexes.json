@@ -13,6 +13,15 @@
       "collectionGroup": "choreEvents",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "choreId", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "choreEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "actorMemberId", "order": "ASCENDING" },
         { "fieldPath": "voidedAt", "order": "ASCENDING" },
         { "fieldPath": "occurredAt", "order": "DESCENDING" }
       ]
@@ -22,6 +31,13 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "actorMemberId", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "choreEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "voidedAt", "order": "ASCENDING" },
         { "fieldPath": "occurredAt", "order": "DESCENDING" }
       ]

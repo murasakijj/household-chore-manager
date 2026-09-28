@@ -1,11 +1,41 @@
 import { z } from "zod";
 
-/** ISO 8601 日時文字列(設計書 §11.4)。`Date.parse` で解釈可能かのみ検証する。 */
+/**
+ * ISO 8601 日時文字列(設計書 §11.4)。オフセット(`Z` または `+09:00` 等)を必須にする。
+ * タイムゾーン無しの文字列(例: `2026-01-01T00:00:00`)はサーバーの実行環境依存で
+ * 解釈が変わるため受け付けない。
+ */
+const ISO_DATETIME_WITH_OFFSET =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+
 export const isoDateTime = z
   .string()
+  .regex(ISO_DATETIME_WITH_OFFSET, { message: "invalid_datetime" })
   .refine((value) => !Number.isNaN(Date.parse(value)), {
     message: "invalid_datetime",
   });
+
+/**
+ * リソースID(家事・イベント・場所・カテゴリ・リソース・メンバー等)の形式。
+ * `randomUUID()` 由来の値を主に想定するが、パス走査や不正文字の混入を防ぐため
+ * 英数字・アンダースコア・ハイフンのみを許可する(設計書レビュー指摘 #11)。
+ */
+export const idSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{1,128}$/, { message: "invalid_id" });
+
+/** IANA タイムゾーン名として `Intl.DateTimeFormat` が受理できるかを検証する。 */
+export const timezoneSchema = z.string().refine(
+  (value) => {
+    try {
+      new Intl.DateTimeFormat("en-CA", { timeZone: value });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: "invalid_timezone" },
+);
 
 const resourceTypeSchema = z.enum([
   "appliance",
@@ -30,17 +60,17 @@ export const areaPatchSchema = z
 
 export const resourceCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
-  areaId: z.string().min(1).nullable().optional(),
+  areaId: idSchema.nullable().optional(),
   resourceType: resourceTypeSchema.optional().default("other"),
-  externalRef: z.string().min(1).nullable().optional(),
+  externalRef: z.string().min(1).max(200).nullable().optional(),
 });
 
 export const resourcePatchSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
-    areaId: z.string().min(1).nullable().optional(),
+    areaId: idSchema.nullable().optional(),
     resourceType: resourceTypeSchema.optional(),
-    externalRef: z.string().min(1).nullable().optional(),
+    externalRef: z.string().min(1).max(200).nullable().optional(),
     isActive: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "empty_patch" });
@@ -63,9 +93,9 @@ export const choreCreateSchema = z.object({
   intervalDays: z.number().int().min(1),
   warningDays: z.number().int().min(0).optional(),
   graceDays: z.number().int().min(0).optional(),
-  categoryId: z.string().min(1).nullable().optional(),
-  areaId: z.string().min(1).nullable().optional(),
-  resourceId: z.string().min(1).nullable().optional(),
+  categoryId: idSchema.nullable().optional(),
+  areaId: idSchema.nullable().optional(),
+  resourceId: idSchema.nullable().optional(),
   description: z.string().max(2000).nullable().optional(),
   lastCompletedAt: isoDateTime.nullable().optional(),
 });
@@ -76,15 +106,15 @@ export const chorePatchSchema = z
     intervalDays: z.number().int().min(1).optional(),
     warningDays: z.number().int().min(0).optional(),
     graceDays: z.number().int().min(0).optional(),
-    categoryId: z.string().min(1).nullable().optional(),
-    areaId: z.string().min(1).nullable().optional(),
-    resourceId: z.string().min(1).nullable().optional(),
+    categoryId: idSchema.nullable().optional(),
+    areaId: idSchema.nullable().optional(),
+    resourceId: idSchema.nullable().optional(),
     description: z.string().max(2000).nullable().optional(),
     isActive: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "empty_patch" });
 
-/** `/api/chores/bulk`: 一括提案からの登録。最大50件(架構.md)。 */
+/** `/api/chores/bulk`: 一括提案からの登録。最大50件(architecture.md)。 */
 export const choresBulkCreateSchema = z.object({
   items: z.array(choreCreateSchema).min(1).max(50),
 });
@@ -92,7 +122,7 @@ export const choresBulkCreateSchema = z.object({
 export const choreEventCreateSchema = z.object({
   clientRequestId: z.string().uuid(),
   occurredAt: isoDateTime.optional(),
-  actorMemberId: z.string().min(1).optional(),
+  actorMemberId: idSchema.optional(),
   note: z.string().max(500).nullable().optional(),
 });
 
@@ -105,7 +135,7 @@ export const voidChoreEventSchema = z
 export const settingsPatchSchema = z
   .object({
     householdName: z.string().trim().min(1).max(100).optional(),
-    timezone: z.string().min(1).max(100).optional(),
+    timezone: timezoneSchema.optional(),
     dailySummaryEnabled: z.boolean().optional(),
     dailySummaryTime: z
       .string()
@@ -115,3 +145,52 @@ export const settingsPatchSchema = z
     oneTapComplete: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "empty_patch" });
+
+// --- クエリパラメータ(一覧・絞り込み系) ---
+
+/** `limit` クエリ: 文字列を数値化し、既定50・最大100 の範囲に収める。 */
+const limitQuerySchema = z
+  .string()
+  .regex(/^\d+$/)
+  .transform((v) => Number(v))
+  .pipe(z.number().int().min(1).max(100))
+  .optional();
+
+/** `true`/`false` の文字列を真偽値へ。指定が無ければ false 扱い(呼び出し側で解釈)。 */
+const booleanQuerySchema = z.enum(["true", "false"]).optional();
+
+export const listEventsQuerySchema = z.object({
+  limit: limitQuerySchema,
+  cursor: idSchema.optional(),
+  includeVoided: booleanQuerySchema,
+});
+
+export const listEventsGlobalQuerySchema = listEventsQuerySchema.extend({
+  choreId: idSchema.optional(),
+  areaId: idSchema.optional(),
+  actorMemberId: idSchema.optional(),
+  from: isoDateTime.optional(),
+  to: isoDateTime.optional(),
+});
+
+const CHORE_STATUS_VALUES = [
+  "not_due",
+  "upcoming",
+  "recommended",
+  "overdue",
+  "never_done",
+  "inactive",
+] as const;
+
+export const listChoresQuerySchema = z.object({
+  status: z.enum(CHORE_STATUS_VALUES).optional(),
+  areaId: idSchema.optional(),
+  categoryId: idSchema.optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+  includeInactive: booleanQuerySchema,
+  sort: z.enum(["status", "elapsed", "name"]).optional(),
+});
+
+export const listMastersQuerySchema = z.object({
+  includeInactive: booleanQuerySchema,
+});

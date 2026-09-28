@@ -91,6 +91,40 @@ describe("computeChoreStatus 追加ケース", () => {
     expect(result.status).toBe("overdue");
   });
 
+  it("日付境界をまたぐ直前(JST 23:59:59)は not_due のまま(レビュー指摘 #13)", () => {
+    // last=01-10 12:00 JST, now=01-14 23:59:59 JST → elapsed=4 → not_due
+    const last = jst("2026-01-10", "12:00:00");
+    const now = jst("2026-01-14", "23:59:59");
+    const result = computeChoreStatus({
+      isActive: true,
+      lastCompletedAt: last,
+      intervalDays: 7,
+      warningDays: 2,
+      graceDays: 3,
+      now,
+      timezone: TZ,
+    });
+    expect(result.elapsedDays).toBe(4);
+    expect(result.status).toBe("not_due");
+  });
+
+  it("日付境界をまたいだ直後(JST 00:00:00)は upcoming になる(レビュー指摘 #13)", () => {
+    // last=01-10 12:00 JST, now=01-15 00:00:00 JST → elapsed=5 → upcoming
+    const last = jst("2026-01-10", "12:00:00");
+    const now = jst("2026-01-15", "00:00:00");
+    const result = computeChoreStatus({
+      isActive: true,
+      lastCompletedAt: last,
+      intervalDays: 7,
+      warningDays: 2,
+      graceDays: 3,
+      now,
+      timezone: TZ,
+    });
+    expect(result.elapsedDays).toBe(5);
+    expect(result.status).toBe("upcoming");
+  });
+
   it("日付変更直前(JST 23:59:59)は前日扱いで elapsed=0", () => {
     const last = jst("2026-01-10", "00:00:01");
     const now = jst("2026-01-10", "23:59:59");
@@ -223,6 +257,34 @@ describe("computeChoreStatus 追加ケース", () => {
     });
     expect(result.status).toBe("not_due");
     expect(result.nextChangeDate).toBe("2026-01-06"); // elapsed=5から upcoming
+  });
+
+  it("upcoming の nextChangeDate は recommended に切り替わる日(レビュー指摘 #13)", () => {
+    const result = computeChoreStatus({
+      isActive: true,
+      lastCompletedAt: jst("2026-01-01"),
+      intervalDays: 7,
+      warningDays: 2,
+      graceDays: 3,
+      now: jst("2026-01-06"), // elapsed=5 → upcoming
+      timezone: TZ,
+    });
+    expect(result.status).toBe("upcoming");
+    expect(result.nextChangeDate).toBe("2026-01-09"); // elapsed=8から recommended
+  });
+
+  it("recommended の nextChangeDate は overdue に切り替わる日(レビュー指摘 #13)", () => {
+    const result = computeChoreStatus({
+      isActive: true,
+      lastCompletedAt: jst("2026-01-01"),
+      intervalDays: 7,
+      warningDays: 2,
+      graceDays: 3,
+      now: jst("2026-01-09"), // elapsed=8 → recommended
+      timezone: TZ,
+    });
+    expect(result.status).toBe("recommended");
+    expect(result.nextChangeDate).toBe("2026-01-12"); // elapsed=11から overdue
   });
 });
 

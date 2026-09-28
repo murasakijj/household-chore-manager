@@ -24,7 +24,11 @@ import type {
   VoidChoreEventParams,
   VoidChoreEventResult,
 } from "./types.js";
-import { RepoConflictError, RepoNotFoundError } from "./errors.js";
+import {
+  RepoConflictError,
+  RepoInvalidQueryError,
+  RepoNotFoundError,
+} from "./errors.js";
 
 /** 設計書 §18 の推奨初期データ(場所)。decisions.md「家庭の自動作成」で使う。 */
 const INITIAL_AREAS = [
@@ -55,12 +59,31 @@ const INITIAL_CATEGORIES = [
 /** 10分以内の再記録を possibleDuplicate として警告する(decisions.md)。 */
 const DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 
+/** Firestore の `in` クエリ1回あたりの最大件数。 */
+const IN_QUERY_CHUNK_SIZE = 30;
+
+/** areaId絞り込み(choreId in [...])で処理するチャンク数の安全上限(レビュー指摘 #6)。 */
+const MAX_AREA_CHUNKS = 40;
+
+type ChoreCreateInput = Omit<
+  Chore,
+  "id" | "householdId" | "createdAt" | "updatedAt" | "lastCompletedAt"
+> & { lastCompletedAt?: Date | null };
+
 function toDate(ts: Timestamp | null | undefined): Date | null {
   return ts ? ts.toDate() : null;
 }
 
 function toTimestampOrNull(date: Date | null | undefined): Timestamp | null {
   return date ? Timestamp.fromDate(date) : null;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 // --- Firestore ドキュメント⇔ドメイン型 変換 ---
@@ -75,13 +98,16 @@ interface HouseholdDoc {
 function householdFromDoc(id: string, d: HouseholdDoc): Household {
   return {
     id,
-    ...d,
+    name: d.name,
+    timezone: d.timezone,
+    schemaVersion: d.schemaVersion,
     createdAt: d.createdAt.toDate(),
     updatedAt: d.updatedAt.toDate(),
   };
 }
 
 interface MemberDoc {
+  householdId: string;
   displayName: string;
   userId: string | null;
   isActive: boolean;
@@ -101,6 +127,7 @@ function memberFromDoc(id: string, householdId: string, d: MemberDoc): Member {
 }
 
 interface AreaDoc {
+  householdId: string;
   name: string;
   sortOrder: number;
   isActive: boolean;
@@ -120,6 +147,7 @@ function areaFromDoc(id: string, householdId: string, d: AreaDoc): Area {
 }
 
 interface ResourceDoc {
+  householdId: string;
   areaId: string | null;
   resourceType: ResourceType;
   name: string;
@@ -147,6 +175,7 @@ function resourceFromDoc(
 }
 
 interface CategoryDoc {
+  householdId: string;
   name: string;
   sortOrder: number;
   isActive: boolean;
@@ -170,6 +199,7 @@ function categoryFromDoc(
 }
 
 interface ChoreDoc {
+  householdId: string;
   name: string;
   description: string | null;
   categoryId: string | null;
@@ -207,6 +237,7 @@ function choreFromDoc(id: string, householdId: string, d: ChoreDoc): Chore {
 }
 
 interface ChoreEventDoc {
+  householdId: string;
   choreId: string;
   eventType: "completed";
   occurredAt: Timestamp;
@@ -240,6 +271,7 @@ function eventFromDoc(
 }
 
 interface NotificationSettingsDoc {
+  householdId: string;
   dailySummaryEnabled: boolean;
   dailySummaryTime: string;
   includeUpcoming: boolean;
@@ -341,6 +373,7 @@ export class FirestoreRepo implements Repo {
       const now = Timestamp.now();
       const householdRef = this.db.collection("households").doc();
       const memberRef = householdRef.collection("members").doc();
+      const householdId = householdRef.id;
 
       tx.set(householdRef, {
         name: "わが家",
@@ -350,6 +383,7 @@ export class FirestoreRepo implements Repo {
         updatedAt: now,
       });
       tx.set(memberRef, {
+        householdId,
         displayName: params.email,
         userId: params.uid,
         isActive: true,
@@ -359,6 +393,7 @@ export class FirestoreRepo implements Repo {
       INITIAL_AREAS.forEach((name, index) => {
         const ref = householdRef.collection("areas").doc();
         tx.set(ref, {
+          householdId,
           name,
           sortOrder: index,
           isActive: true,
@@ -369,6 +404,7 @@ export class FirestoreRepo implements Repo {
       INITIAL_CATEGORIES.forEach((name, index) => {
         const ref = householdRef.collection("choreCategories").doc();
         tx.set(ref, {
+          householdId,
           name,
           sortOrder: index,
           isActive: true,
@@ -380,6 +416,7 @@ export class FirestoreRepo implements Repo {
         .collection("notificationSettings")
         .doc(memberRef.id);
       tx.set(settingsRef, {
+        householdId,
         dailySummaryEnabled: true,
         dailySummaryTime: "08:00",
         includeUpcoming: false,
@@ -388,7 +425,7 @@ export class FirestoreRepo implements Repo {
         updatedAt: now,
       });
       tx.set(membershipRef, {
-        householdId: householdRef.id,
+        householdId,
         memberId: memberRef.id,
         email: params.email,
         createdAt: now,
@@ -396,7 +433,7 @@ export class FirestoreRepo implements Repo {
 
       return {
         uid: params.uid,
-        householdId: householdRef.id,
+        householdId,
         memberId: memberRef.id,
         email: params.email,
         createdAt: now.toDate(),
@@ -463,6 +500,7 @@ export class FirestoreRepo implements Repo {
     const now = Timestamp.now();
     const ref = this.areasCol(householdId).doc();
     const doc: AreaDoc = {
+      householdId,
       name: input.name,
       sortOrder: input.sortOrder,
       isActive: true,
@@ -518,6 +556,7 @@ export class FirestoreRepo implements Repo {
     const now = Timestamp.now();
     const ref = this.resourcesCol(householdId).doc();
     const doc: ResourceDoc = {
+      householdId,
       ...input,
       isActive: true,
       createdAt: now,
@@ -576,6 +615,7 @@ export class FirestoreRepo implements Repo {
     const now = Timestamp.now();
     const ref = this.categoriesCol(householdId).doc();
     const doc: CategoryDoc = {
+      householdId,
       name: input.name,
       sortOrder: input.sortOrder,
       isActive: true,
@@ -619,33 +659,68 @@ export class FirestoreRepo implements Repo {
 
   async createChore(
     householdId: string,
-    input: Omit<
-      Chore,
-      "id" | "householdId" | "createdAt" | "updatedAt" | "lastCompletedAt"
-    > & {
-      lastCompletedAt?: Date | null;
-    },
+    input: ChoreCreateInput,
   ): Promise<Chore> {
+    const [chore] = await this.createChoresBulk(householdId, [input]);
+    return chore;
+  }
+
+  async createChoresBulk(
+    householdId: string,
+    items: ChoreCreateInput[],
+  ): Promise<Chore[]> {
+    // 事前の読み取りが不要な新規作成のみなので、トランザクションではなく
+    // batch(書き込みのみ・原子的にコミット)でまとめる(レビュー指摘 #1, #7, #16)。
+    // 家事ドキュメントと初回イベントドキュメントを同じbatchに入れることで、
+    // 「家事はあるのにイベントが無い」半端な状態を防ぐ。
+    const batch = this.db.batch();
     const now = Timestamp.now();
-    const ref = this.choresCol(householdId).doc();
-    const doc: ChoreDoc = {
-      name: input.name,
-      description: input.description,
-      categoryId: input.categoryId,
-      areaId: input.areaId,
-      resourceId: input.resourceId,
-      scheduleType: input.scheduleType,
-      intervalDays: input.intervalDays,
-      warningDays: input.warningDays,
-      graceDays: input.graceDays,
-      isActive: input.isActive,
-      createdBy: input.createdBy,
-      createdAt: now,
-      updatedAt: now,
-      lastCompletedAt: toTimestampOrNull(input.lastCompletedAt ?? null),
-    };
-    await ref.set(doc);
-    return choreFromDoc(ref.id, householdId, doc);
+    const created: Chore[] = [];
+
+    for (const input of items) {
+      const choreRef = this.choresCol(householdId).doc();
+      const doc: ChoreDoc = {
+        householdId,
+        name: input.name,
+        description: input.description,
+        categoryId: input.categoryId,
+        areaId: input.areaId,
+        resourceId: input.resourceId,
+        scheduleType: input.scheduleType,
+        intervalDays: input.intervalDays,
+        warningDays: input.warningDays,
+        graceDays: input.graceDays,
+        isActive: input.isActive,
+        createdBy: input.createdBy,
+        createdAt: now,
+        updatedAt: now,
+        lastCompletedAt: toTimestampOrNull(input.lastCompletedAt ?? null),
+      };
+      batch.set(choreRef, doc);
+
+      if (input.lastCompletedAt) {
+        const eventRef = this.eventsCol(householdId).doc();
+        const eventDoc: ChoreEventDoc = {
+          householdId,
+          choreId: choreRef.id,
+          eventType: "completed",
+          occurredAt: Timestamp.fromDate(input.lastCompletedAt),
+          actorMemberId: input.createdBy,
+          recordedByMemberId: input.createdBy,
+          note: null,
+          voidedAt: null,
+          voidedByMemberId: null,
+          voidReason: null,
+          createdAt: now,
+        };
+        batch.set(eventRef, eventDoc);
+      }
+
+      created.push(choreFromDoc(choreRef.id, householdId, doc));
+    }
+
+    await batch.commit();
+    return created;
   }
 
   async updateChore(
@@ -676,6 +751,27 @@ export class FirestoreRepo implements Repo {
 
   // --- 実施履歴(イベント追加・取消は同一トランザクションで lastCompletedAt を再計算) ---
 
+  /**
+   * 指定した家事の「直近1件(有効履歴のMAX occurredAt)」を返す。
+   * `choreId ASC, voidedAt ASC, occurredAt DESC` の複合インデックスを使う。
+   */
+  private async getLatestActiveEventInTx(
+    tx: FirebaseFirestore.Transaction,
+    householdId: string,
+    choreId: string,
+  ): Promise<ChoreEvent | null> {
+    const snap = await tx.get(
+      this.eventsCol(householdId)
+        .where("choreId", "==", choreId)
+        .where("voidedAt", "==", null)
+        .orderBy("occurredAt", "desc")
+        .limit(1),
+    );
+    const doc = snap.docs[0];
+    if (!doc) return null;
+    return eventFromDoc(doc.id, householdId, doc.data() as ChoreEventDoc);
+  }
+
   async addChoreEvent(
     params: AddChoreEventParams,
   ): Promise<AddChoreEventResult> {
@@ -685,6 +781,8 @@ export class FirestoreRepo implements Repo {
     );
 
     return this.db.runTransaction(async (tx) => {
+      // --- 読み取りはすべてここで行い、書き込みより前に終える ---
+      // (firebase-admin は read-after-write を禁止しているため。レビュー指摘 #1)
       const [choreSnap, eventSnap] = await Promise.all([
         tx.get(choreRef),
         tx.get(eventRef),
@@ -692,17 +790,18 @@ export class FirestoreRepo implements Repo {
       if (!choreSnap.exists) throw new RepoNotFoundError("chore");
 
       if (eventSnap.exists) {
+        const existingData = eventSnap.data() as ChoreEventDoc;
+        if (existingData.choreId !== params.choreId) {
+          // 同じ clientRequestId が別の家事に対して使われている(クライアント不具合の可能性)。
+          throw new RepoConflictError("client_request_id_conflict");
+        }
         // 同じ clientRequestId の再送 → 冪等に既存イベントを返す(decisions.md)。
         const chore = choreFromDoc(
           params.choreId,
           params.householdId,
           choreSnap.data() as ChoreDoc,
         );
-        const event = eventFromDoc(
-          eventRef.id,
-          params.householdId,
-          eventSnap.data() as ChoreEventDoc,
-        );
+        const event = eventFromDoc(eventRef.id, params.householdId, existingData);
         return {
           event,
           chore,
@@ -711,23 +810,36 @@ export class FirestoreRepo implements Repo {
         };
       }
 
-      // possibleDuplicate判定用に、同一家事の有効履歴を取得する(トランザクション内)。
-      const activeSnap = await tx.get(
-        this.eventsCol(params.householdId)
-          .where("choreId", "==", params.choreId)
-          .where("voidedAt", "==", null),
-      );
-      const activeEvents = activeSnap.docs.map((doc) =>
-        eventFromDoc(doc.id, params.householdId, doc.data() as ChoreEventDoc),
-      );
-      const possibleDuplicate = activeEvents.some(
-        (e) =>
-          Math.abs(e.occurredAt.getTime() - params.occurredAt.getTime()) <=
-          DUPLICATE_WINDOW_MS,
+      // lastCompletedAt 再計算用に「直近の有効履歴1件」だけ読む(全件スキャンしない。レビュー指摘 #1)。
+      const latestActive = await this.getLatestActiveEventInTx(
+        tx,
+        params.householdId,
+        params.choreId,
       );
 
+      // possibleDuplicate判定: 新イベントの occurredAt ±10分の範囲に有効履歴があるか、
+      // 存在確認だけの limit(1) クエリで調べる(全件スキャンしない。レビュー指摘 #1)。
+      const windowStart = Timestamp.fromDate(
+        new Date(params.occurredAt.getTime() - DUPLICATE_WINDOW_MS),
+      );
+      const windowEnd = Timestamp.fromDate(
+        new Date(params.occurredAt.getTime() + DUPLICATE_WINDOW_MS),
+      );
+      const dupSnap = await tx.get(
+        this.eventsCol(params.householdId)
+          .where("choreId", "==", params.choreId)
+          .where("voidedAt", "==", null)
+          .where("occurredAt", ">=", windowStart)
+          .where("occurredAt", "<=", windowEnd)
+          .orderBy("occurredAt", "desc")
+          .limit(1),
+      );
+      const possibleDuplicate = !dupSnap.empty;
+
+      // --- ここから書き込みのみ ---
       const now = Timestamp.now();
       const eventDoc: ChoreEventDoc = {
+        householdId: params.householdId,
         choreId: params.choreId,
         eventType: "completed",
         occurredAt: Timestamp.fromDate(params.occurredAt),
@@ -741,12 +853,10 @@ export class FirestoreRepo implements Repo {
       };
       tx.set(eventRef, eventDoc);
 
-      const latest = activeEvents.reduce<Date | null>((max, e) => {
-        if (!max || e.occurredAt > max) return e.occurredAt;
-        return max;
-      }, null);
       const newLatest =
-        !latest || params.occurredAt > latest ? params.occurredAt : latest;
+        !latestActive || params.occurredAt > latestActive.occurredAt
+          ? params.occurredAt
+          : latestActive.occurredAt;
 
       tx.update(choreRef, {
         lastCompletedAt: Timestamp.fromDate(newLatest),
@@ -778,6 +888,7 @@ export class FirestoreRepo implements Repo {
     const eventRef = this.eventsCol(params.householdId).doc(params.eventId);
 
     return this.db.runTransaction(async (tx) => {
+      // --- 読み取りはすべてここで行い、書き込みより前に終える(レビュー指摘 #1) ---
       const eventSnap = await tx.get(eventRef);
       if (!eventSnap.exists) throw new RepoNotFoundError("chore_event");
       const eventData = eventSnap.data() as ChoreEventDoc;
@@ -789,29 +900,30 @@ export class FirestoreRepo implements Repo {
       const choreSnap = await tx.get(choreRef);
       if (!choreSnap.exists) throw new RepoNotFoundError("chore");
 
+      // 取消後に残る「直近2件」だけを読む(自分自身が含まれる可能性があるため2件。
+      // 全件スキャンしない。レビュー指摘 #1)。取消対象がこの2件の外にいる場合、
+      // 最新の有効履歴は取消の影響を受けないので、そのままで正しい。
+      const candidatesSnap = await tx.get(
+        this.eventsCol(params.householdId)
+          .where("choreId", "==", eventData.choreId)
+          .where("voidedAt", "==", null)
+          .orderBy("occurredAt", "desc")
+          .limit(2),
+      );
+      const remainingLatest = candidatesSnap.docs
+        .filter((doc) => doc.id !== eventRef.id)
+        .map((doc) =>
+          eventFromDoc(doc.id, params.householdId, doc.data() as ChoreEventDoc),
+        )[0];
+      const latest = remainingLatest?.occurredAt ?? null;
+
+      // --- ここから書き込みのみ ---
       const now = Timestamp.now();
       tx.update(eventRef, {
         voidedAt: now,
         voidedByMemberId: params.voidedByMemberId,
         voidReason: params.voidReason,
       });
-
-      // 取消後に残る有効履歴から MAX(occurredAt) を再計算する。
-      const remainingSnap = await tx.get(
-        this.eventsCol(params.householdId)
-          .where("choreId", "==", eventData.choreId)
-          .where("voidedAt", "==", null),
-      );
-      const remaining = remainingSnap.docs
-        .filter((doc) => doc.id !== eventRef.id)
-        .map((doc) =>
-          eventFromDoc(doc.id, params.householdId, doc.data() as ChoreEventDoc),
-        );
-      const latest = remaining.reduce<Date | null>((max, e) => {
-        if (!max || e.occurredAt > max) return e.occurredAt;
-        return max;
-      }, null);
-
       tx.update(choreRef, {
         lastCompletedAt: toTimestampOrNull(latest),
         updatedAt: now,
@@ -851,11 +963,21 @@ export class FirestoreRepo implements Repo {
     householdId: string,
     opts?: ListChoreEventsGlobalOptions,
   ): Promise<Page<ChoreEvent>> {
+    // Firestoreの複合インデックスの組み合わせ爆発を避けるため、Firestore側の等価
+    // フィルタは「choreId」「areaId(chore由来のin)」「actorMemberId」のうち
+    // 優先度が最も高い1つだけに限定し、残りはアプリ側で絞り込む(レビュー指摘 #2, #6)。
+    // 個人利用規模(設計書 §14.2)ではこれで十分な性能が出る。
+    if (opts?.areaId) {
+      return this.listChoreEventsByAreaId(householdId, opts);
+    }
+
     let query = this.eventsCol(householdId) as FirebaseFirestore.Query;
     if (!opts?.includeVoided) query = query.where("voidedAt", "==", null);
-    if (opts?.choreId) query = query.where("choreId", "==", opts.choreId);
-    if (opts?.actorMemberId)
+    if (opts?.choreId) {
+      query = query.where("choreId", "==", opts.choreId);
+    } else if (opts?.actorMemberId) {
       query = query.where("actorMemberId", "==", opts.actorMemberId);
+    }
     if (opts?.from)
       query = query.where("occurredAt", ">=", Timestamp.fromDate(opts.from));
     if (opts?.to)
@@ -863,18 +985,74 @@ export class FirestoreRepo implements Repo {
     query = query.orderBy("occurredAt", "desc");
 
     const page = await this.runPagedQuery(householdId, query, opts);
-    if (!opts?.areaId) return page;
 
-    // areaId 絞り込みはchore側の属性のため、アプリ側でフィルタする
-    // (対象家事数は家庭あたり最大1,000件程度を想定。設計書 §14.2)。
+    // choreId をFirestore側フィルタに使った場合、actorMemberId はアプリ側で絞り込む
+    // (逆に actorMemberId を使った場合の choreId 絞り込みも同様)。
+    let items = page.items;
+    if (opts?.choreId && opts?.actorMemberId) {
+      items = items.filter((e) => e.actorMemberId === opts.actorMemberId);
+    }
+    return { items, nextCursor: page.nextCursor };
+  }
+
+  /**
+   * areaId 絞り込み: 対象エリアの choreId 一覧を取得し、`in` クエリを
+   * `IN_QUERY_CHUNK_SIZE` 件ずつに分割して問い合わせ、occurredAt降順にマージする
+   * (レビュー指摘 #6)。チャンク数には安全上限を設ける。
+   */
+  private async listChoreEventsByAreaId(
+    householdId: string,
+    opts: ListChoreEventsGlobalOptions,
+  ): Promise<Page<ChoreEvent>> {
     const choresSnap = await this.choresCol(householdId)
       .where("areaId", "==", opts.areaId)
       .get();
-    const choreIds = new Set(choresSnap.docs.map((d) => d.id));
-    return {
-      items: page.items.filter((e) => choreIds.has(e.choreId)),
-      nextCursor: page.nextCursor,
-    };
+    const choreIds = choresSnap.docs.map((d) => d.id);
+    if (choreIds.length === 0) return { items: [], nextCursor: null };
+
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
+    const chunks = chunk(choreIds, IN_QUERY_CHUNK_SIZE).slice(0, MAX_AREA_CHUNKS);
+
+    let cursorOccurredAt: Timestamp | null = null;
+    if (opts.cursor) {
+      const cursorEvent = await this.getChoreEvent(householdId, opts.cursor);
+      if (!cursorEvent) throw new RepoInvalidQueryError("cursor");
+      cursorOccurredAt = Timestamp.fromDate(cursorEvent.occurredAt);
+    }
+
+    const results = await Promise.all(
+      chunks.map(async (ids) => {
+        let q = this.eventsCol(householdId).where(
+          "choreId",
+          "in",
+          ids,
+        ) as FirebaseFirestore.Query;
+        if (!opts.includeVoided) q = q.where("voidedAt", "==", null);
+        if (opts.from) q = q.where("occurredAt", ">=", Timestamp.fromDate(opts.from));
+        if (opts.to) q = q.where("occurredAt", "<=", Timestamp.fromDate(opts.to));
+        q = q.orderBy("occurredAt", "desc");
+        if (cursorOccurredAt) q = q.startAfter(cursorOccurredAt);
+        // 各チャンクから limit+1 件ずつ取れば、マージ後の上位limit(+1)件の正しさが
+        // 保証できる(あるチャンク内での順位がlimitを超える結果は、全体順位でも
+        // limitを超えるため)。
+        q = q.limit(limit + 1);
+        const snap = await q.get();
+        return snap.docs.map((doc) =>
+          eventFromDoc(doc.id, householdId, doc.data() as ChoreEventDoc),
+        );
+      }),
+    );
+
+    let merged = results.flat();
+    if (opts.actorMemberId) {
+      merged = merged.filter((e) => e.actorMemberId === opts.actorMemberId);
+    }
+    merged.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
+
+    const items = merged.slice(0, limit);
+    const nextCursor =
+      merged.length > limit ? (items[items.length - 1]?.id ?? null) : null;
+    return { items, nextCursor };
   }
 
   private async runPagedQuery(
@@ -888,9 +1066,12 @@ export class FirestoreRepo implements Repo {
       const cursorSnap = await this.eventsCol(householdId)
         .doc(opts.cursor)
         .get();
-      if (cursorSnap.exists) {
-        q = q.startAfter(cursorSnap);
+      // カーソルが存在しないIDを指している場合は400にする(レビュー指摘 #11)。
+      // サイレントに先頭から返すと、クライアントが壊れたカーソルに気づけない。
+      if (!cursorSnap.exists) {
+        throw new RepoInvalidQueryError("cursor");
       }
+      q = q.startAfter(cursorSnap);
     }
     const snap = await q.get();
     const docs = snap.docs.slice(0, limit);
@@ -938,6 +1119,7 @@ export class FirestoreRepo implements Repo {
     const base: NotificationSettingsDoc = existing.exists
       ? (existing.data() as NotificationSettingsDoc)
       : {
+          householdId,
           dailySummaryEnabled: true,
           dailySummaryTime: "08:00",
           includeUpcoming: false,
@@ -948,6 +1130,7 @@ export class FirestoreRepo implements Repo {
     const updated: NotificationSettingsDoc = {
       ...base,
       ...patch,
+      householdId,
       updatedAt: Timestamp.now(),
     };
     await ref.set(updated);

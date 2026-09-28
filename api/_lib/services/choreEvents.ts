@@ -1,6 +1,10 @@
 import type { ChoreEvent, Page, Repo } from "../repo/types.js";
-import { ApiError, notFound } from "../apiError.js";
-import { RepoConflictError, RepoNotFoundError } from "../repo/errors.js";
+import { ApiError, invalidQuery, notFound } from "../apiError.js";
+import {
+  RepoConflictError,
+  RepoInvalidQueryError,
+  RepoNotFoundError,
+} from "../repo/errors.js";
 import type { ChoreWithStatus } from "./chores.js";
 import { getChoreWithStatus } from "./chores.js";
 
@@ -48,15 +52,21 @@ export async function addChoreEvent(
       throw new ApiError(400, "invalid_reference", { field: "actorMemberId" });
   }
 
-  const result = await repo.addChoreEvent({
-    householdId,
-    choreId: input.choreId,
-    clientRequestId: input.clientRequestId,
-    occurredAt,
-    actorMemberId,
-    recordedByMemberId,
-    note: input.note ?? null,
-  });
+  let result;
+  try {
+    result = await repo.addChoreEvent({
+      householdId,
+      choreId: input.choreId,
+      clientRequestId: input.clientRequestId,
+      occurredAt,
+      actorMemberId,
+      recordedByMemberId,
+      note: input.note ?? null,
+    });
+  } catch (err) {
+    if (err instanceof RepoConflictError) throw new ApiError(409, err.code);
+    throw err;
+  }
 
   const choreWithStatus = await getChoreWithStatus(
     repo,
@@ -121,7 +131,12 @@ export async function listChoreEventsForChore(
 ): Promise<Page<ChoreEvent>> {
   const chore = await repo.getChore(householdId, choreId);
   if (!chore) throw notFound("chore");
-  return repo.listChoreEventsForChore(householdId, choreId, query);
+  try {
+    return await repo.listChoreEventsForChore(householdId, choreId, query);
+  } catch (err) {
+    if (err instanceof RepoInvalidQueryError) throw invalidQuery({ field: err.field });
+    throw err;
+  }
 }
 
 export interface ListEventsGlobalQuery extends ListEventsQuery {
@@ -137,6 +152,8 @@ export async function listChoreEvents(
   householdId: string,
   query: ListEventsGlobalQuery,
 ): Promise<Page<ChoreEvent>> {
+  // choreId/areaId は「一覧の対象資源」として404、actorMemberId は「絞り込み条件」
+  // として400にする(レビュー指摘 #3, #8)。
   if (query.choreId) {
     const chore = await repo.getChore(householdId, query.choreId);
     if (!chore) throw notFound("chore");
@@ -145,14 +162,23 @@ export async function listChoreEvents(
     const area = await repo.getArea(householdId, query.areaId);
     if (!area) throw notFound("area");
   }
-  return repo.listChoreEvents(householdId, {
-    limit: query.limit,
-    cursor: query.cursor,
-    includeVoided: query.includeVoided,
-    choreId: query.choreId,
-    areaId: query.areaId,
-    actorMemberId: query.actorMemberId,
-    from: query.from ? new Date(query.from) : undefined,
-    to: query.to ? new Date(query.to) : undefined,
-  });
+  if (query.actorMemberId) {
+    const member = await repo.getMember(householdId, query.actorMemberId);
+    if (!member) throw invalidQuery({ field: "actorMemberId" });
+  }
+  try {
+    return await repo.listChoreEvents(householdId, {
+      limit: query.limit,
+      cursor: query.cursor,
+      includeVoided: query.includeVoided,
+      choreId: query.choreId,
+      areaId: query.areaId,
+      actorMemberId: query.actorMemberId,
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+    });
+  } catch (err) {
+    if (err instanceof RepoInvalidQueryError) throw invalidQuery({ field: err.field });
+    throw err;
+  }
 }

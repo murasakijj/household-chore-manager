@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import type { Chore, ChoreEvent, Repo } from "../repo/types.js";
+import type { Area, Chore, ChoreCategory, ChoreEvent, Repo, Resource } from "../repo/types.js";
 import {
   computeChoreStatus,
   defaultWarningGrace,
@@ -114,18 +113,14 @@ export async function getChoreDetail(
     timezone,
     now,
   );
+  // 表示用(最近20件)と平均実施間隔の算出を1回の読み取りで済ませる
+  // (直近最大100件の有効履歴から算出する参考値。全履歴は読まない)。
   const page = await repo.listChoreEventsForChore(householdId, id, {
-    limit: 20,
-    includeVoided: false,
-  });
-  const recentEvents = page.items;
-
-  // 平均実施間隔は「有効履歴が2件以上」の場合のみ、全有効履歴から算出する参考値。
-  const allActive = await repo.listChoreEventsForChore(householdId, id, {
     limit: 100,
     includeVoided: false,
   });
-  const averageIntervalDays = computeAverageIntervalDays(allActive.items);
+  const recentEvents = page.items.slice(0, 20);
+  const averageIntervalDays = computeAverageIntervalDays(page.items);
 
   return { ...withStatus, recentEvents, averageIntervalDays };
 }
@@ -236,6 +231,8 @@ export async function createChore(
     warnings.push("duplicate_name");
   }
 
+  // 家事作成 + (指定があれば)初回イベント追加は、リポジトリ側で1回の書き込み単位に
+  // まとめる(レビュー指摘 #16)。
   const chore = await repo.createChore(householdId, {
     name: input.name,
     description: input.description ?? null,
@@ -248,23 +245,10 @@ export async function createChore(
     graceDays,
     isActive: true,
     createdBy,
+    lastCompletedAt,
   });
 
-  let finalChore = chore;
-  if (lastCompletedAt) {
-    const result = await repo.addChoreEvent({
-      householdId,
-      choreId: chore.id,
-      clientRequestId: randomUUID(),
-      occurredAt: lastCompletedAt,
-      actorMemberId: createdBy,
-      recordedByMemberId: createdBy,
-      note: null,
-    });
-    finalChore = result.chore;
-  }
-
-  return { chore: attachStatus(finalChore, now, timezone), warnings };
+  return { chore: attachStatus(chore, now, timezone), warnings };
 }
 
 export interface BulkCreateResult {
@@ -272,7 +256,12 @@ export interface BulkCreateResult {
   warnings: Array<{ index: number; warnings: string[] }>;
 }
 
-/** `/api/chores/bulk`: 一括提案からの登録。最大50件(architecture.md)。 */
+/**
+ * `/api/chores/bulk`: 一括提案からの登録。最大50件(architecture.md)。
+ * 参照先・間隔の検証は全件を先に行い、1件でも不正なら書き込みを一切行わない
+ * (レビュー指摘 #7)。既存の家事名は1回だけ読み、Firestoreへの書き込みも
+ * `repo.createChoresBulk` で1回にまとめる。
+ */
 export async function bulkCreateChores(
   repo: Repo,
   householdId: string,
@@ -281,22 +270,103 @@ export async function bulkCreateChores(
   now: Date,
   items: CreateChoreInput[],
 ): Promise<BulkCreateResult> {
-  const created: ChoreWithStatus[] = [];
-  const warnings: Array<{ index: number; warnings: string[] }> = [];
+  // 参照先(場所・カテゴリ・対象リソース)は家庭あたり1回ずつ読み、以降はSetで検証する。
+  const [areas, categories, resources, existingChores] = await Promise.all([
+    repo.listAreas(householdId, { includeInactive: true }),
+    repo.listChoreCategories(householdId, { includeInactive: true }),
+    repo.listResources(householdId, { includeInactive: true }),
+    repo.listChores(householdId, { includeInactive: true }),
+  ]);
+  const areaIds = new Set<string>(areas.map((a: Area) => a.id));
+  const categoryIds = new Set<string>(categories.map((c: ChoreCategory) => c.id));
+  const resourceIds = new Set<string>(resources.map((r: Resource) => r.id));
+  const existingNames = new Set<string>(existingChores.map((c) => c.name));
+
+  const prepared: Array<{
+    input: Omit<
+      Chore,
+      "id" | "householdId" | "createdAt" | "updatedAt" | "lastCompletedAt"
+    > & { lastCompletedAt: Date | null };
+    warnings: string[];
+  }> = [];
+  const seenNamesInBatch = new Set<string>();
+
   for (let i = 0; i < items.length; i++) {
-    const result = await createChore(
-      repo,
-      householdId,
-      createdBy,
-      timezone,
-      now,
-      items[i],
-    );
-    created.push(result.chore);
-    if (result.warnings.length > 0)
-      warnings.push({ index: i, warnings: result.warnings });
+    const item = items[i];
+
+    if (item.categoryId && !categoryIds.has(item.categoryId)) {
+      throw new ApiError(400, "invalid_reference", { index: i, field: "categoryId" });
+    }
+    if (item.areaId && !areaIds.has(item.areaId)) {
+      throw new ApiError(400, "invalid_reference", { index: i, field: "areaId" });
+    }
+    if (item.resourceId && !resourceIds.has(item.resourceId)) {
+      throw new ApiError(400, "invalid_reference", { index: i, field: "resourceId" });
+    }
+
+    const defaults = defaultWarningGrace(item.intervalDays);
+    const warningDays = item.warningDays ?? defaults.warningDays;
+    const graceDays = item.graceDays ?? defaults.graceDays;
+    try {
+      validateIntervals({ intervalDays: item.intervalDays, warningDays, graceDays });
+    } catch (err) {
+      if (err instanceof InvalidIntervalError) {
+        throw new ApiError(400, "invalid_body", { index: i, message: err.message });
+      }
+      throw err;
+    }
+
+    let lastCompletedAt: Date | null = null;
+    if (item.lastCompletedAt) {
+      lastCompletedAt = new Date(item.lastCompletedAt);
+      if (lastCompletedAt.getTime() > now.getTime()) {
+        throw new ApiError(400, "invalid_body", {
+          index: i,
+          field: "lastCompletedAt",
+          reason: "future",
+        });
+      }
+    }
+
+    const warnings: string[] = [];
+    if (existingNames.has(item.name) || seenNamesInBatch.has(item.name)) {
+      warnings.push("duplicate_name");
+    }
+    seenNamesInBatch.add(item.name);
+
+    prepared.push({
+      input: {
+        name: item.name,
+        description: item.description ?? null,
+        categoryId: item.categoryId ?? null,
+        areaId: item.areaId ?? null,
+        resourceId: item.resourceId ?? null,
+        scheduleType: "interval",
+        intervalDays: item.intervalDays,
+        warningDays,
+        graceDays,
+        isActive: true,
+        createdBy,
+        lastCompletedAt,
+      },
+      warnings,
+    });
   }
-  return { created, warnings };
+
+  const createdChores = await repo.createChoresBulk(
+    householdId,
+    prepared.map((p) => p.input),
+  );
+
+  const warnings: Array<{ index: number; warnings: string[] }> = [];
+  prepared.forEach((p, i) => {
+    if (p.warnings.length > 0) warnings.push({ index: i, warnings: p.warnings });
+  });
+
+  return {
+    created: createdChores.map((c) => attachStatus(c, now, timezone)),
+    warnings,
+  };
 }
 
 export interface UpdateChoreInput {

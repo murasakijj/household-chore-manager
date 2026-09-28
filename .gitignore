@@ -7,3 +7,10 @@ dist/
 *.tsbuildinfo
 .claude/*
 !.claude/CLAUDE.md
+
+# Firebase emulator(`npm run test:emulator`)
+.firebase/
+firestore-debug.log
+firebase-debug.log
+ui-debug.log
+firestore-export/

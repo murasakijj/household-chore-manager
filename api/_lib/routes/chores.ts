@@ -4,6 +4,7 @@ import {
   choreCreateSchema,
   chorePatchSchema,
   choresBulkCreateSchema,
+  listChoresQuerySchema,
 } from "../validation.js";
 import {
   bulkCreateChores as bulkCreateChoresService,
@@ -13,31 +14,14 @@ import {
   updateChore as updateChoreService,
 } from "../services/chores.js";
 import { getTodayChores } from "../services/today.js";
-import type { ChoreStatus } from "../domain/status.js";
 import type { RouteCtx, RouteResult } from "./types.js";
-import { ok } from "./types.js";
-
-const VALID_STATUSES: ChoreStatus[] = [
-  "not_due",
-  "upcoming",
-  "recommended",
-  "overdue",
-  "never_done",
-  "inactive",
-];
+import { ok, parsePathId, parseQueryParams } from "./types.js";
 
 export async function listChores(
   ctx: RouteCtx,
   query: URLSearchParams,
 ): Promise<RouteResult> {
-  const statusParam = query.get("status");
-  if (statusParam && !VALID_STATUSES.includes(statusParam as ChoreStatus)) {
-    throw invalidBody({ field: "status" });
-  }
-  const sortParam = query.get("sort");
-  if (sortParam && !["status", "elapsed", "name"].includes(sortParam)) {
-    throw invalidBody({ field: "sort" });
-  }
+  const q = parseQueryParams(listChoresQuerySchema, query);
 
   const chores = await listChoresWithStatus(
     ctx.repo,
@@ -45,12 +29,12 @@ export async function listChores(
     ctx.household.timezone,
     ctx.now,
     {
-      status: (statusParam as ChoreStatus) ?? undefined,
-      areaId: query.get("areaId") ?? undefined,
-      categoryId: query.get("categoryId") ?? undefined,
-      q: query.get("q") ?? undefined,
-      includeInactive: query.get("includeInactive") === "true",
-      sort: (sortParam as "status" | "elapsed" | "name") ?? undefined,
+      status: q.status,
+      areaId: q.areaId,
+      categoryId: q.categoryId,
+      q: q.q,
+      includeInactive: q.includeInactive === "true",
+      sort: q.sort,
     },
   );
 
@@ -78,8 +62,9 @@ export async function getToday(ctx: RouteCtx): Promise<RouteResult> {
 
 export async function getChore(
   ctx: RouteCtx,
-  id: string,
+  rawId: string,
 ): Promise<RouteResult> {
+  const id = parsePathId(rawId);
   const detail = await getChoreDetail(
     ctx.repo,
     ctx.householdId,
@@ -131,9 +116,10 @@ export async function bulkCreateChores(
 
 export async function patchChore(
   ctx: RouteCtx,
-  id: string,
+  rawId: string,
   body: unknown,
 ): Promise<RouteResult> {
+  const id = parsePathId(rawId);
   const parsed = chorePatchSchema.safeParse(body);
   if (!parsed.success) throw invalidBody(parsed.error.issues);
 

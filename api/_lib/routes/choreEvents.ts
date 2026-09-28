@@ -1,6 +1,11 @@
 import { invalidBody } from "../apiError.js";
 import { choreDto, choreEventDto } from "../dto.js";
-import { choreEventCreateSchema, voidChoreEventSchema } from "../validation.js";
+import {
+  choreEventCreateSchema,
+  listEventsGlobalQuerySchema,
+  listEventsQuerySchema,
+  voidChoreEventSchema,
+} from "../validation.js";
 import {
   addChoreEvent as addChoreEventService,
   listChoreEvents as listChoreEventsService,
@@ -8,23 +13,14 @@ import {
   voidChoreEvent as voidChoreEventService,
 } from "../services/choreEvents.js";
 import type { RouteCtx, RouteResult } from "./types.js";
-import { ok } from "./types.js";
-
-function parseListQuery(query: URLSearchParams) {
-  const limitParam = query.get("limit");
-  const limit = limitParam ? Number(limitParam) : undefined;
-  return {
-    limit: limit && Number.isFinite(limit) ? limit : undefined,
-    cursor: query.get("cursor") ?? undefined,
-    includeVoided: query.get("includeVoided") === "true",
-  };
-}
+import { ok, parsePathId, parseQueryParams } from "./types.js";
 
 export async function addChoreEvent(
   ctx: RouteCtx,
-  choreId: string,
+  rawChoreId: string,
   body: unknown,
 ): Promise<RouteResult> {
+  const choreId = parsePathId(rawChoreId);
   const parsed = choreEventCreateSchema.safeParse(body);
   if (!parsed.success) throw invalidBody(parsed.error.issues);
 
@@ -50,15 +46,16 @@ export async function addChoreEvent(
 
 export async function listEventsForChore(
   ctx: RouteCtx,
-  choreId: string,
+  rawChoreId: string,
   query: URLSearchParams,
 ): Promise<RouteResult> {
-  const page = await listChoreEventsForChoreService(
-    ctx.repo,
-    ctx.householdId,
-    choreId,
-    parseListQuery(query),
-  );
+  const choreId = parsePathId(rawChoreId);
+  const q = parseQueryParams(listEventsQuerySchema, query);
+  const page = await listChoreEventsForChoreService(ctx.repo, ctx.householdId, choreId, {
+    limit: q.limit,
+    cursor: q.cursor,
+    includeVoided: q.includeVoided === "true",
+  });
   return ok({
     items: page.items.map(choreEventDto),
     nextCursor: page.nextCursor,
@@ -69,13 +66,16 @@ export async function listAllEvents(
   ctx: RouteCtx,
   query: URLSearchParams,
 ): Promise<RouteResult> {
+  const q = parseQueryParams(listEventsGlobalQuerySchema, query);
   const page = await listChoreEventsService(ctx.repo, ctx.householdId, {
-    ...parseListQuery(query),
-    choreId: query.get("choreId") ?? undefined,
-    areaId: query.get("areaId") ?? undefined,
-    actorMemberId: query.get("actorMemberId") ?? undefined,
-    from: query.get("from") ?? undefined,
-    to: query.get("to") ?? undefined,
+    limit: q.limit,
+    cursor: q.cursor,
+    includeVoided: q.includeVoided === "true",
+    choreId: q.choreId,
+    areaId: q.areaId,
+    actorMemberId: q.actorMemberId,
+    from: q.from,
+    to: q.to,
   });
   return ok({
     items: page.items.map(choreEventDto),
@@ -85,9 +85,10 @@ export async function listAllEvents(
 
 export async function voidEvent(
   ctx: RouteCtx,
-  eventId: string,
+  rawEventId: string,
   body: unknown,
 ): Promise<RouteResult> {
+  const eventId = parsePathId(rawEventId);
   const parsed = voidChoreEventSchema.safeParse(body ?? {});
   if (!parsed.success) throw invalidBody(parsed.error.issues);
 

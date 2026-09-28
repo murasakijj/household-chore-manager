@@ -183,6 +183,19 @@ export function createRouter(repoFactory: () => Repo) {
     res: ApiResponse,
   ): Promise<void> {
     try {
+      const path = resolvePath(req);
+      const segments = path.split("/").filter(Boolean);
+      const method = req.method ?? "GET";
+
+      // cron は requireAuth(Firebase IDトークン)を通さない(設計書 §11.4の例外、
+      // architecture.md)。CRON_SECRET 検証はバッチ3で実装する。
+      // TODO(batch3): Authorization: Bearer $CRON_SECRET を定数時間比較で検証し、
+      // /api/cron/daily-summary を実装する。それまでは未実装として404を返す。
+      if (segments[0] === "cron") {
+        sendJson(res, 404, { error: "not_found" });
+        return;
+      }
+
       let user;
       try {
         user = await requireAuth(req.headers.authorization);
@@ -193,10 +206,6 @@ export function createRouter(repoFactory: () => Repo) {
         }
         throw err;
       }
-
-      const path = resolvePath(req);
-      const segments = path.split("/").filter(Boolean);
-      const method = req.method ?? "GET";
 
       const dispatch = matchRoute(method, segments);
       if (!dispatch) {

@@ -20,3 +20,16 @@ export function notFound(resource: string): ApiError {
 export function invalidBody(details?: unknown): ApiError {
   return new ApiError(400, "invalid_body", details);
 }
+
+export function invalidQuery(details?: unknown): ApiError {
+  return new ApiError(400, "invalid_query", details);
+}
+
+/** パス中のID(chore/event/area等)が形式不正な場合。 */
+export function invalidId(details?: unknown): ApiError {
+  return new ApiError(400, "invalid_id", details);
+}
+
+export function conflict(code: string, details?: unknown): ApiError {
+  return new ApiError(409, code, details);
+}

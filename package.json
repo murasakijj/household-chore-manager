@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:emulator": "firebase emulators:exec --project demo-household-chore-manager --only firestore \"vitest run --config vitest.emulator.config.ts\"",
     "format": "prettier --write ."
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "eslint": "^10.7.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
+    "firebase-tools": "^15.31.0",
     "globals": "^17.7.0",
     "prettier": "^3.9.5",
     "typescript": "~5.9.3",

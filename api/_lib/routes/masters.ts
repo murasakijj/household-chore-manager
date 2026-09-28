@@ -5,12 +5,13 @@ import {
   areaPatchSchema,
   categoryCreateSchema,
   categoryPatchSchema,
+  listMastersQuerySchema,
   resourceCreateSchema,
   resourcePatchSchema,
 } from "../validation.js";
 import * as masters from "../services/masters.js";
 import type { RouteCtx, RouteResult } from "./types.js";
-import { ok } from "./types.js";
+import { ok, parsePathId, parseQueryParams } from "./types.js";
 
 // --- 場所(areas) ---
 
@@ -18,10 +19,11 @@ export async function listAreas(
   ctx: RouteCtx,
   query: URLSearchParams,
 ): Promise<RouteResult> {
+  const q = parseQueryParams(listMastersQuerySchema, query);
   const items = await masters.listAreas(
     ctx.repo,
     ctx.householdId,
-    query.get("includeInactive") === "true",
+    q.includeInactive === "true",
   );
   return ok({ items: items.map(areaDto) });
 }
@@ -38,9 +40,10 @@ export async function createArea(
 
 export async function patchArea(
   ctx: RouteCtx,
-  id: string,
+  rawId: string,
   body: unknown,
 ): Promise<RouteResult> {
+  const id = parsePathId(rawId);
   const parsed = areaPatchSchema.safeParse(body);
   if (!parsed.success) throw invalidBody(parsed.error.issues);
   const area = await masters.updateArea(
@@ -58,10 +61,11 @@ export async function listResources(
   ctx: RouteCtx,
   query: URLSearchParams,
 ): Promise<RouteResult> {
+  const q = parseQueryParams(listMastersQuerySchema, query);
   const items = await masters.listResources(
     ctx.repo,
     ctx.householdId,
-    query.get("includeInactive") === "true",
+    q.includeInactive === "true",
   );
   return ok({ items: items.map(resourceDto) });
 }
@@ -82,9 +86,10 @@ export async function createResource(
 
 export async function patchResource(
   ctx: RouteCtx,
-  id: string,
+  rawId: string,
   body: unknown,
 ): Promise<RouteResult> {
+  const id = parsePathId(rawId);
   const parsed = resourcePatchSchema.safeParse(body);
   if (!parsed.success) throw invalidBody(parsed.error.issues);
   const resource = await masters.updateResource(
@@ -102,10 +107,11 @@ export async function listCategories(
   ctx: RouteCtx,
   query: URLSearchParams,
 ): Promise<RouteResult> {
+  const q = parseQueryParams(listMastersQuerySchema, query);
   const items = await masters.listChoreCategories(
     ctx.repo,
     ctx.householdId,
-    query.get("includeInactive") === "true",
+    q.includeInactive === "true",
   );
   return ok({ items: items.map(categoryDto) });
 }
@@ -126,9 +132,10 @@ export async function createCategory(
 
 export async function patchCategory(
   ctx: RouteCtx,
-  id: string,
+  rawId: string,
   body: unknown,
 ): Promise<RouteResult> {
+  const id = parsePathId(rawId);
   const parsed = categoryPatchSchema.safeParse(body);
   if (!parsed.success) throw invalidBody(parsed.error.issues);
   const category = await masters.updateChoreCategory(

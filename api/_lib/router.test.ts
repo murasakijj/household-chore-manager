@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ApiRequest, ApiResponse } from "./_lib/types.js";
+import type { ApiRequest, ApiResponse } from "./types.js";
 
 // firebase-admin をモックする(auth.test.ts と同様)。verifyIdToken はトークン文字列から
 // 決定的にuid/emailを作る(結合テストで複数ユーザー=複数家庭を再現するため)。
@@ -15,8 +15,8 @@ vi.mock("firebase-admin/auth", () => ({
   getAuth: () => ({ verifyIdToken }),
 }));
 
-const { createRouter } = await import("./router.js");
-const { MemoryRepo } = await import("./_lib/repo/memoryRepo.js");
+const { createRouter } = await import("../router.js");
+const { MemoryRepo } = await import("./repo/memoryRepo.js");
 
 function tokenFor(user: "u1" | "u2"): string {
   return `token-${user}`;
@@ -354,5 +354,155 @@ describe("結合テスト(設計書 §16.2, インメモリリポジトリ + サ
     expect((second.body as { warnings: string[] }).warnings).toContain(
       "duplicate_name",
     );
+  });
+
+  it("他家庭のイベントは取消できない(404)", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "u1専用家事", intervalDays: 5 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+    const recorded = await call("POST", `chores/${choreId}/events`, {
+      user: "u1",
+      body: { clientRequestId: "11111111-2222-4333-8444-555555555555" },
+    });
+    const eventId = (recorded.body as { event: { id: string } }).event.id;
+
+    // u2を先にbootstrapさせる
+    await call("GET", "auth-check", { user: "u2" });
+
+    const voidedByOther = await call("POST", `chore-events/${eventId}/void`, {
+      user: "u2",
+    });
+    expect(voidedByOther.status).toBe(404);
+  });
+
+  it("他家庭の家事一覧履歴(GET events)・編集(PATCH)は404", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "u1専用家事2", intervalDays: 5 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+
+    const eventsByOther = await call("GET", `chores/${choreId}/events`, {
+      user: "u2",
+    });
+    expect(eventsByOther.status).toBe(404);
+
+    const patchByOther = await call("PATCH", `chores/${choreId}`, {
+      user: "u2",
+      body: { name: "乗っ取り" },
+    });
+    expect(patchByOther.status).toBe(404);
+  });
+
+  it("他家庭の area/category/resource を参照した家事登録は400", async () => {
+    const u2Areas = await call("GET", "areas", { user: "u2" });
+    const foreignAreaId = (u2Areas.body as { items: Array<{ id: string }> })
+      .items[0].id;
+
+    const result = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "他家庭area参照", intervalDays: 5, areaId: foreignAreaId },
+    });
+    expect(result.status).toBe(400);
+    expect((result.body as { error: string }).error).toBe("invalid_reference");
+  });
+
+  it("他家庭の actorMemberId を指定した履歴絞り込みは400", async () => {
+    const u2AuthCheck = await call("GET", "auth-check", { user: "u2" });
+    const foreignMemberId = (u2AuthCheck.body as { member: { id: string } })
+      .member.id;
+
+    const result = await call("GET", "chore-events", {
+      user: "u1",
+      query: { actorMemberId: foreignMemberId },
+    });
+    expect(result.status).toBe(400);
+    expect((result.body as { error: string }).error).toBe("invalid_query");
+  });
+
+  it("chore-events の choreId/areaId に他家庭を指定すると404", async () => {
+    const created = await call("POST", "chores", {
+      user: "u2",
+      body: { name: "u2専用家事", intervalDays: 5 },
+    });
+    const foreignChoreId = (created.body as { chore: { id: string } }).chore
+      .id;
+
+    const byChoreId = await call("GET", "chore-events", {
+      user: "u1",
+      query: { choreId: foreignChoreId },
+    });
+    expect(byChoreId.status).toBe(404);
+
+    const u2Areas = await call("GET", "areas", { user: "u2" });
+    const foreignAreaId = (u2Areas.body as { items: Array<{ id: string }> })
+      .items[0].id;
+    const byAreaId = await call("GET", "chore-events", {
+      user: "u1",
+      query: { areaId: foreignAreaId },
+    });
+    expect(byAreaId.status).toBe(404);
+  });
+
+  it("二重取消は409", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "二重取消テスト", intervalDays: 5 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+    const recorded = await call("POST", `chores/${choreId}/events`, {
+      user: "u1",
+      body: { clientRequestId: "22222222-3333-4444-8555-666666666666" },
+    });
+    const eventId = (recorded.body as { event: { id: string } }).event.id;
+
+    const first = await call("POST", `chore-events/${eventId}/void`, {
+      user: "u1",
+    });
+    expect(first.status).toBe(200);
+
+    const second = await call("POST", `chore-events/${eventId}/void`, {
+      user: "u1",
+    });
+    expect(second.status).toBe(409);
+  });
+
+  it("取消後、状態が取消前の(1つ前の履歴に基づく)状態へ戻る", async () => {
+    const created = await call("POST", "chores", {
+      user: "u1",
+      body: { name: "状態復帰テスト", intervalDays: 7, warningDays: 2, graceDays: 3 },
+    });
+    const choreId = (created.body as { chore: { id: string } }).chore.id;
+
+    // 20日前の実施記録 → elapsed=20 → overdue のはず
+    const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+    await call("POST", `chores/${choreId}/events`, {
+      user: "u1",
+      body: {
+        clientRequestId: "33333333-4444-5555-8666-777777777777",
+        occurredAt: old,
+      },
+    });
+    const beforeVoid = await call("GET", `chores/${choreId}`, { user: "u1" });
+    expect((beforeVoid.body as { status: string }).status).toBe("overdue");
+
+    // 今記録 → not_due になる
+    const recentResult = await call("POST", `chores/${choreId}/events`, {
+      user: "u1",
+      body: { clientRequestId: "44444444-5555-6666-8777-888888888888" },
+    });
+    const recentEventId = (recentResult.body as { event: { id: string } })
+      .event.id;
+    const afterRecent = await call("GET", `chores/${choreId}`, {
+      user: "u1",
+    });
+    expect((afterRecent.body as { status: string }).status).toBe("not_due");
+
+    // 直近の記録を取り消す → 20日前の記録に基づき overdue に戻る
+    await call("POST", `chore-events/${recentEventId}/void`, { user: "u1" });
+    const afterVoid = await call("GET", `chores/${choreId}`, { user: "u1" });
+    expect((afterVoid.body as { status: string }).status).toBe("overdue");
   });
 });

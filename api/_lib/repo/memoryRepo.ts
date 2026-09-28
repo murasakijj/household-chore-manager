@@ -19,7 +19,7 @@ import type {
   VoidChoreEventParams,
   VoidChoreEventResult,
 } from "./types.js";
-import { RepoConflictError, RepoNotFoundError } from "./errors.js";
+import { RepoConflictError, RepoInvalidQueryError, RepoNotFoundError } from "./errors.js";
 
 /** 設計書 §18 の推奨初期データ(場所)。decisions.md「家庭の自動作成」で使う。 */
 const INITIAL_AREAS = [
@@ -49,6 +49,16 @@ const INITIAL_CATEGORIES = [
 
 /** 10分以内の再記録を possibleDuplicate として警告する(decisions.md)。 */
 const DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
+
+/** 家庭をまたいだキー衝突が起きないよう、Mapのキーは `${householdId}/${id}` にする(レビュー指摘 #10)。 */
+function key(householdId: string, id: string): string {
+  return `${householdId}/${id}`;
+}
+
+type ChoreCreateInput = Omit<
+  Chore,
+  "id" | "householdId" | "createdAt" | "updatedAt" | "lastCompletedAt"
+> & { lastCompletedAt?: Date | null };
 
 /**
  * テスト・結合テスト用のインメモリリポジトリ。`firestoreRepo.ts` と同じ
@@ -99,11 +109,11 @@ export class MemoryRepo implements Repo {
       createdAt: now,
       updatedAt: now,
     };
-    this.members.set(memberId, member);
+    this.members.set(key(householdId, memberId), member);
 
     INITIAL_AREAS.forEach((name, index) => {
       const id = randomUUID();
-      this.areas.set(id, {
+      this.areas.set(key(householdId, id), {
         id,
         householdId,
         name,
@@ -116,7 +126,7 @@ export class MemoryRepo implements Repo {
 
     INITIAL_CATEGORIES.forEach((name, index) => {
       const id = randomUUID();
-      this.categories.set(id, {
+      this.categories.set(key(householdId, id), {
         id,
         householdId,
         name,
@@ -137,7 +147,7 @@ export class MemoryRepo implements Repo {
       lastSentLocalDate: null,
       updatedAt: now,
     };
-    this.notificationSettings.set(memberId, settings);
+    this.notificationSettings.set(key(householdId, memberId), settings);
 
     const membership: UserMembership = {
       uid: params.uid,
@@ -168,9 +178,7 @@ export class MemoryRepo implements Repo {
     householdId: string,
     memberId: string,
   ): Promise<Member | null> {
-    const member = this.members.get(memberId);
-    if (!member || member.householdId !== householdId) return null;
-    return member;
+    return this.members.get(key(householdId, memberId)) ?? null;
   }
 
   async listMembers(householdId: string): Promise<Member[]> {
@@ -192,9 +200,7 @@ export class MemoryRepo implements Repo {
   }
 
   async getArea(householdId: string, id: string): Promise<Area | null> {
-    const area = this.areas.get(id);
-    if (!area || area.householdId !== householdId) return null;
-    return area;
+    return this.areas.get(key(householdId, id)) ?? null;
   }
 
   async createArea(
@@ -211,7 +217,7 @@ export class MemoryRepo implements Repo {
       createdAt: now,
       updatedAt: now,
     };
-    this.areas.set(area.id, area);
+    this.areas.set(key(householdId, area.id), area);
     return area;
   }
 
@@ -222,7 +228,7 @@ export class MemoryRepo implements Repo {
   ): Promise<Area> {
     const current = this.requireArea(householdId, id);
     const updated: Area = { ...current, ...patch, updatedAt: new Date() };
-    this.areas.set(id, updated);
+    this.areas.set(key(householdId, id), updated);
     return updated;
   }
 
@@ -238,9 +244,7 @@ export class MemoryRepo implements Repo {
   }
 
   async getResource(householdId: string, id: string): Promise<Resource | null> {
-    const resource = this.resources.get(id);
-    if (!resource || resource.householdId !== householdId) return null;
-    return resource;
+    return this.resources.get(key(householdId, id)) ?? null;
   }
 
   async createResource(
@@ -264,7 +268,7 @@ export class MemoryRepo implements Repo {
       createdAt: now,
       updatedAt: now,
     };
-    this.resources.set(resource.id, resource);
+    this.resources.set(key(householdId, resource.id), resource);
     return resource;
   }
 
@@ -280,7 +284,7 @@ export class MemoryRepo implements Repo {
   ): Promise<Resource> {
     const current = this.requireResource(householdId, id);
     const updated: Resource = { ...current, ...patch, updatedAt: new Date() };
-    this.resources.set(id, updated);
+    this.resources.set(key(householdId, id), updated);
     return updated;
   }
 
@@ -300,9 +304,7 @@ export class MemoryRepo implements Repo {
     householdId: string,
     id: string,
   ): Promise<ChoreCategory | null> {
-    const category = this.categories.get(id);
-    if (!category || category.householdId !== householdId) return null;
-    return category;
+    return this.categories.get(key(householdId, id)) ?? null;
   }
 
   async createChoreCategory(
@@ -319,7 +321,7 @@ export class MemoryRepo implements Repo {
       createdAt: now,
       updatedAt: now,
     };
-    this.categories.set(category.id, category);
+    this.categories.set(key(householdId, category.id), category);
     return category;
   }
 
@@ -334,7 +336,7 @@ export class MemoryRepo implements Repo {
       ...patch,
       updatedAt: new Date(),
     };
-    this.categories.set(id, updated);
+    this.categories.set(key(householdId, id), updated);
     return updated;
   }
 
@@ -350,29 +352,57 @@ export class MemoryRepo implements Repo {
   }
 
   async getChore(householdId: string, id: string): Promise<Chore | null> {
-    const chore = this.chores.get(id);
-    if (!chore || chore.householdId !== householdId) return null;
-    return chore;
+    return this.chores.get(key(householdId, id)) ?? null;
   }
 
   async createChore(
     householdId: string,
-    input: Omit<
-      Chore,
-      "id" | "householdId" | "createdAt" | "updatedAt" | "lastCompletedAt"
-    > & { lastCompletedAt?: Date | null },
+    input: ChoreCreateInput,
   ): Promise<Chore> {
-    const now = new Date();
-    const chore: Chore = {
-      ...input,
-      id: randomUUID(),
-      householdId,
-      lastCompletedAt: input.lastCompletedAt ?? null,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.chores.set(chore.id, chore);
+    const [chore] = await this.createChoresBulk(householdId, [input]);
     return chore;
+  }
+
+  async createChoresBulk(
+    householdId: string,
+    items: ChoreCreateInput[],
+  ): Promise<Chore[]> {
+    // Firestoreのbatch書き込みと同様、家事作成+初回イベント追加を1回の操作としてまとめる
+    // (レビュー指摘 #7, #16)。インメモリなので実際の原子性は不要だが、挙動をそろえる。
+    const now = new Date();
+    const created: Chore[] = [];
+    for (const input of items) {
+      const chore: Chore = {
+        ...input,
+        id: randomUUID(),
+        householdId,
+        lastCompletedAt: input.lastCompletedAt ?? null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.chores.set(key(householdId, chore.id), chore);
+
+      if (input.lastCompletedAt) {
+        const event: ChoreEvent = {
+          id: randomUUID(),
+          householdId,
+          choreId: chore.id,
+          eventType: "completed",
+          occurredAt: input.lastCompletedAt,
+          actorMemberId: input.createdBy,
+          recordedByMemberId: input.createdBy,
+          note: null,
+          voidedAt: null,
+          voidedByMemberId: null,
+          voidReason: null,
+          createdAt: now,
+        };
+        this.events.set(key(householdId, event.id), event);
+      }
+
+      created.push(chore);
+    }
+    return created;
   }
 
   async updateChore(
@@ -395,7 +425,7 @@ export class MemoryRepo implements Repo {
   ): Promise<Chore> {
     const current = this.requireChore(householdId, id);
     const updated: Chore = { ...current, ...patch, updatedAt: new Date() };
-    this.chores.set(id, updated);
+    this.chores.set(key(householdId, id), updated);
     return updated;
   }
 
@@ -406,8 +436,12 @@ export class MemoryRepo implements Repo {
   ): Promise<AddChoreEventResult> {
     const chore = this.requireChore(params.householdId, params.choreId);
 
-    const existing = this.events.get(params.clientRequestId);
-    if (existing && existing.householdId === params.householdId) {
+    const existing = this.events.get(key(params.householdId, params.clientRequestId));
+    if (existing) {
+      if (existing.choreId !== params.choreId) {
+        // 同じ clientRequestId が別の家事に対して使われている(クライアント不具合の可能性)。
+        throw new RepoConflictError("client_request_id_conflict");
+      }
       // 同じ clientRequestId の再送 → 冪等に既存イベントを返す(decisions.md)。
       return {
         event: existing,
@@ -443,7 +477,7 @@ export class MemoryRepo implements Repo {
         DUPLICATE_WINDOW_MS,
     );
 
-    this.events.set(event.id, event);
+    this.events.set(key(params.householdId, event.id), event);
 
     const updatedChore = this.recomputeLastCompletedAt(
       params.householdId,
@@ -462,16 +496,14 @@ export class MemoryRepo implements Repo {
     householdId: string,
     id: string,
   ): Promise<ChoreEvent | null> {
-    const event = this.events.get(id);
-    if (!event || event.householdId !== householdId) return null;
-    return event;
+    return this.events.get(key(householdId, id)) ?? null;
   }
 
   async voidChoreEvent(
     params: VoidChoreEventParams,
   ): Promise<VoidChoreEventResult> {
-    const event = this.events.get(params.eventId);
-    if (!event || event.householdId !== params.householdId) {
+    const event = this.events.get(key(params.householdId, params.eventId));
+    if (!event) {
       throw new RepoNotFoundError("chore_event");
     }
     if (event.voidedAt) {
@@ -485,7 +517,7 @@ export class MemoryRepo implements Repo {
       voidedByMemberId: params.voidedByMemberId,
       voidReason: params.voidReason,
     };
-    this.events.set(event.id, updatedEvent);
+    this.events.set(key(params.householdId, event.id), updatedEvent);
 
     const chore = this.recomputeLastCompletedAt(
       params.householdId,
@@ -503,7 +535,7 @@ export class MemoryRepo implements Repo {
       .filter((e) => e.householdId === householdId && e.choreId === choreId)
       .filter((e) => opts?.includeVoided || !e.voidedAt)
       .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
-    return paginate(all, opts);
+    return this.paginate(householdId, all, opts);
   }
 
   async listChoreEvents(
@@ -530,7 +562,7 @@ export class MemoryRepo implements Repo {
     if (opts?.from) all = all.filter((e) => e.occurredAt >= opts.from!);
     if (opts?.to) all = all.filter((e) => e.occurredAt <= opts.to!);
     all.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
-    return paginate(all, opts);
+    return this.paginate(householdId, all, opts);
   }
 
   // --- 通知設定 ---
@@ -539,9 +571,7 @@ export class MemoryRepo implements Repo {
     householdId: string,
     memberId: string,
   ): Promise<NotificationSettings | null> {
-    const settings = this.notificationSettings.get(memberId);
-    if (!settings || settings.householdId !== householdId) return null;
-    return settings;
+    return this.notificationSettings.get(key(householdId, memberId)) ?? null;
   }
 
   async upsertNotificationSettings(
@@ -558,7 +588,7 @@ export class MemoryRepo implements Repo {
       >
     >,
   ): Promise<NotificationSettings> {
-    const current = this.notificationSettings.get(memberId) ?? {
+    const current = this.notificationSettings.get(key(householdId, memberId)) ?? {
       memberId,
       householdId,
       dailySummaryEnabled: true,
@@ -575,7 +605,7 @@ export class MemoryRepo implements Repo {
       householdId,
       updatedAt: new Date(),
     };
-    this.notificationSettings.set(memberId, updated);
+    this.notificationSettings.set(key(householdId, memberId), updated);
     return updated;
   }
 
@@ -607,8 +637,37 @@ export class MemoryRepo implements Repo {
       lastCompletedAt: latest,
       updatedAt: new Date(),
     };
-    this.chores.set(choreId, updated);
+    this.chores.set(key(householdId, choreId), updated);
     return updated;
+  }
+
+  /** `cursor` が指定されているのに解決できない場合は `RepoInvalidQueryError` を投げる(レビュー指摘 #11)。 */
+  private paginate(
+    householdId: string,
+    items: ChoreEvent[],
+    opts?: { limit?: number; cursor?: string | null },
+  ): Page<ChoreEvent> {
+    const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
+    let startIndex = 0;
+    if (opts?.cursor) {
+      const idx = items.findIndex((i) => i.id === opts.cursor);
+      if (idx === -1) {
+        // カーソルが存在する(=household内に実在する)イベントを指しているかも確認する。
+        // 存在しないIDなら400、存在するが今回の絞り込み結果に無いだけなら先頭から返す。
+        if (!this.events.has(key(householdId, opts.cursor))) {
+          throw new RepoInvalidQueryError("cursor");
+        }
+        startIndex = 0;
+      } else {
+        startIndex = idx + 1;
+      }
+    }
+    const page = items.slice(startIndex, startIndex + limit);
+    const nextCursor =
+      startIndex + limit < items.length
+        ? (page[page.length - 1]?.id ?? null)
+        : null;
+    return { items: page, nextCursor };
   }
 
   private requireHousehold(householdId: string): Household {
@@ -618,52 +677,34 @@ export class MemoryRepo implements Repo {
   }
 
   private requireArea(householdId: string, id: string): Area {
-    const area = this.areas.get(id);
-    if (!area || area.householdId !== householdId) {
+    const area = this.areas.get(key(householdId, id));
+    if (!area) {
       throw new RepoNotFoundError("area");
     }
     return area;
   }
 
   private requireResource(householdId: string, id: string): Resource {
-    const resource = this.resources.get(id);
-    if (!resource || resource.householdId !== householdId) {
+    const resource = this.resources.get(key(householdId, id));
+    if (!resource) {
       throw new RepoNotFoundError("resource");
     }
     return resource;
   }
 
   private requireCategory(householdId: string, id: string): ChoreCategory {
-    const category = this.categories.get(id);
-    if (!category || category.householdId !== householdId) {
+    const category = this.categories.get(key(householdId, id));
+    if (!category) {
       throw new RepoNotFoundError("chore_category");
     }
     return category;
   }
 
   private requireChore(householdId: string, id: string): Chore {
-    const chore = this.chores.get(id);
-    if (!chore || chore.householdId !== householdId) {
+    const chore = this.chores.get(key(householdId, id));
+    if (!chore) {
       throw new RepoNotFoundError("chore");
     }
     return chore;
   }
-}
-
-function paginate<T extends { id: string }>(
-  items: T[],
-  opts?: { limit?: number; cursor?: string | null },
-): Page<T> {
-  const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
-  let startIndex = 0;
-  if (opts?.cursor) {
-    const idx = items.findIndex((i) => i.id === opts.cursor);
-    startIndex = idx === -1 ? 0 : idx + 1;
-  }
-  const page = items.slice(startIndex, startIndex + limit);
-  const nextCursor =
-    startIndex + limit < items.length
-      ? (page[page.length - 1]?.id ?? null)
-      : null;
-  return { items: page, nextCursor };
 }

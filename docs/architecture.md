@@ -73,12 +73,17 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 ```
 
 - `firebase/firestore.rules`: クライアントは全拒否（`allow read, write: if false;`）。
-- `firebase/firestore.indexes.json`: `choreEvents` に `(choreId ASC, voidedAt ASC, occurredAt DESC)`、`(voidedAt ASC, occurredAt DESC)`（全体履歴）。
+- `firebase/firestore.indexes.json`: `choreEvents` に以下の複合インデックス。
+  - `(choreId ASC, voidedAt ASC, occurredAt DESC)`: 家事別履歴（有効履歴のみ）、`lastCompletedAt` 再計算、possibleDuplicate 判定、`areaId` 絞り込みの `choreId in [...]`
+  - `(choreId ASC, occurredAt DESC)`: 家事別履歴（`includeVoided=true`）
+  - `(actorMemberId ASC, voidedAt ASC, occurredAt DESC)`: 全体履歴の実施者絞り込み（有効履歴のみ）
+  - `(actorMemberId ASC, occurredAt DESC)`: 全体履歴の実施者絞り込み（`includeVoided=true`）
+  - `(voidedAt ASC, occurredAt DESC)`: 全体履歴（絞り込み無し、有効履歴のみ）
 - 参照整合性: 家事の `areaId`/`categoryId`/`resourceId` は同一家庭のサブコレクションに存在することをサーバーで検証（別家庭は存在しない扱い → 400）。
 
 ### リポジトリ層
 
-`api/_lib/repo/types.ts` にインターフェースを定義し、`firestoreRepo.ts`（本番）と `memoryRepo.ts`（テスト用）を実装する。イベント追加・取消は「イベント書き込み + `lastCompletedAt` 再計算」を1トランザクションで行うメソッドとして提供する。サービス層（`api/_lib/services/`）はリポジトリだけに依存し、結合テストはインメモリで回す。
+`api/_lib/repo/types.ts` にインターフェースを定義し、`firestoreRepo.ts`（本番）と `memoryRepo.ts`（テスト用）を実装する。イベント追加・取消は「イベント書き込み + `lastCompletedAt` 再計算」を1トランザクションで行うメソッドとして提供する。firebase-admin のトランザクションは read-after-write を禁止するため、トランザクション内の読み取りはすべて書き込みより前に完了させる。`lastCompletedAt` 再計算に必要な読み取りは「有効履歴のうち occurredAt 降順の先頭（取消時は先頭2件）」だけに限定し、家事あたりの履歴が多くても全件スキャンしない。家事作成（初回実施日時つき）と一括登録（`/api/chores/bulk`）は、事前の読み取りが不要なため `batch()` でまとめて書き込む。サービス層（`api/_lib/services/`）はリポジトリだけに依存し、結合テストはインメモリで回す。
 
 ## API
 
