@@ -452,10 +452,7 @@ export async function getInitialChoreTemplates(): Promise<{
 
 export async function bulkCreateChores(
   items: ChoreCreateInput[],
-): Promise<{
-  created: ChoreDto[];
-  warnings: Array<{ index: number; warnings: string[] }>;
-}> {
+): Promise<{ created: ChoreDto[]; warnings: Array<{ index: number; warnings: string[] }> }> {
   return request("POST", "chores/bulk", { body: { items } });
 }
 

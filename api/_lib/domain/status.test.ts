@@ -246,6 +246,20 @@ describe("computeChoreStatus 追加ケース", () => {
     expect(overdue.nextChangeDate).toBeNull();
   });
 
+  it("warning=0 の not_due の nextChangeDate は lastDate+interval(due_today の日)", () => {
+    const result = computeChoreStatus({
+      isActive: true,
+      lastCompletedAt: jst("2026-01-01"),
+      intervalDays: 7,
+      warningDays: 0,
+      graceDays: 3,
+      now: jst("2026-01-04"), // elapsed=3
+      timezone: TZ,
+    });
+    expect(result.status).toBe("not_due");
+    expect(result.nextChangeDate).toBe("2026-01-08");
+  });
+
   it("not_due の nextChangeDate は upcoming に切り替わる日", () => {
     const result = computeChoreStatus({
       isActive: true,
@@ -260,7 +274,7 @@ describe("computeChoreStatus 追加ケース", () => {
     expect(result.nextChangeDate).toBe("2026-01-06"); // elapsed=5から upcoming
   });
 
-  it("upcoming の nextChangeDate は recommended に切り替わる日(レビュー指摘 #13)", () => {
+  it("upcoming の nextChangeDate は due_today に切り替わる日", () => {
     const result = computeChoreStatus({
       isActive: true,
       lastCompletedAt: jst("2026-01-01"),

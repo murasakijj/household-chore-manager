@@ -92,7 +92,7 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 | Method | Path | 備考 |
 | --- | --- | --- |
 | GET | `/api/auth-check` | 200 `{ok:true, member, household}` |
-| GET | `/api/chores` | `status, areaId, categoryId, q, includeInactive, sort=status\|elapsed\|name`。各家事に `status, elapsedDays, lastCompletedAt, nextChangeDate` を付与 |
+| GET | `/api/chores` | `status, areaId, categoryId, q, includeInactive, sort=status\|elapsed\|name`。各家事に `status, elapsedDays, overdueDays, lastCompletedAt, nextChangeDate` を付与 |
 | POST | `/api/chores` | 同名があれば `warnings:["duplicate_name"]` を返す（保存はする）。任意 `lastCompletedAt` 指定時は completed イベントを1件作る |
 | POST | `/api/chores/bulk` | 一括提案からの登録（最大50件） |
 | GET | `/api/chores/today` | `{sections:{overdue, recommended, dueToday, upcoming, neverDone, doneToday}, notDueCount}` |
