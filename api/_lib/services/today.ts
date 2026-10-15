@@ -6,6 +6,7 @@ export interface TodayResult {
   sections: {
     overdue: ChoreWithStatus[];
     recommended: ChoreWithStatus[];
+    dueToday: ChoreWithStatus[];
     upcoming: ChoreWithStatus[];
     neverDone: ChoreWithStatus[];
     doneToday: ChoreWithStatus[];

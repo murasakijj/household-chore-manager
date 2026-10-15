@@ -232,6 +232,7 @@ export const listEventsGlobalQuerySchema = listEventsQuerySchema.extend({
 const CHORE_STATUS_VALUES = [
   "not_due",
   "upcoming",
+  "due_today",
   "recommended",
   "overdue",
   "never_done",

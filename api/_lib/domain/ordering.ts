@@ -4,10 +4,11 @@ import type { ChoreStatus } from "./status.js";
 const STATUS_PRIORITY: Record<ChoreStatus, number> = {
   overdue: 0,
   recommended: 1,
-  upcoming: 2,
-  never_done: 3,
-  not_due: 4,
-  inactive: 5,
+  due_today: 2,
+  upcoming: 3,
+  never_done: 4,
+  not_due: 5,
+  inactive: 6,
 };
 
 export interface OrderableChore {

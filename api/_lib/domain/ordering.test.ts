@@ -10,9 +10,12 @@ function chore(
 }
 
 describe("compareChoresForDisplay(設計書 §12.3)", () => {
-  it("状態順: overdue → recommended → upcoming", () => {
+  it("状態順: overdue → recommended → due_today → upcoming → never_done → not_due", () => {
     const items = [
+      chore("not_due", null, "f"),
+      chore("never_done", null, "e"),
       chore("upcoming", -1, "b"),
+      chore("due_today", 0, "d"),
       chore("overdue", 5, "a"),
       chore("recommended", 1, "c"),
     ];
@@ -20,7 +23,10 @@ describe("compareChoresForDisplay(設計書 §12.3)", () => {
     expect(sorted.map((c) => c.status)).toEqual([
       "overdue",
       "recommended",
+      "due_today",
       "upcoming",
+      "never_done",
+      "not_due",
     ]);
   });
 

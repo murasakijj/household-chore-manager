@@ -37,9 +37,49 @@ describe("buildDailySummary(設計書 §12.1〜12.3, §7.7)", () => {
       includeUpcoming: false,
     });
     expect(result).not.toBeNull();
-    expect(result!.lines[0]).toBe("今日の家事: 優先1件、やった方がよい2件");
+    expect(result!.lines[0]).toBe("今日の家事: 優先1件、超過2件");
     // overdue(シーツ交換) → recommended超過日数降順(冷蔵庫整理3, 風呂の排水溝1)
     expect(result!.lines[1]).toBe("シーツ交換、冷蔵庫整理、風呂の排水溝");
+  });
+
+  it("due_today も対象になり、0件の区分は省略される", () => {
+    const result = buildDailySummary({
+      chores: [
+        chore("1", "overdue", 4, "シーツ交換"),
+        chore("2", "recommended", 1, "風呂の排水溝"),
+        chore("3", "recommended", 3, "冷蔵庫整理"),
+        chore("4", "due_today", 0, "窓拭き"),
+      ],
+      now,
+      timezone: TZ,
+      includeUpcoming: false,
+    });
+    expect(result!.lines[0]).toBe(
+      "今日の家事: 優先1件、超過2件、今日やる日1件",
+    );
+    expect(result!.targetChoreIds).toEqual(["1", "3", "2", "4"]);
+
+    const only = buildDailySummary({
+      chores: [chore("1", "due_today", 0, "窓拭き")],
+      now,
+      timezone: TZ,
+      includeUpcoming: false,
+    });
+    expect(only!.lines[0]).toBe("今日の家事: 今日やる日1件");
+  });
+
+  it("upcoming を含めると 今日やる日 の後ろに並ぶ", () => {
+    const result = buildDailySummary({
+      chores: [
+        chore("1", "upcoming", -1, "A"),
+        chore("2", "due_today", 0, "B"),
+      ],
+      now,
+      timezone: TZ,
+      includeUpcoming: true,
+    });
+    expect(result!.lines[0]).toBe("今日の家事: 今日やる日1件、そろそろ1件");
+    expect(result!.targetChoreIds).toEqual(["2", "1"]);
   });
 
   it("includeUpcoming=false なら upcoming は対象外", () => {

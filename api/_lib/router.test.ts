@@ -534,6 +534,60 @@ describe("結合テスト(設計書 §16.2, インメモリリポジトリ + サ
     const afterVoid = await call("GET", `chores/${choreId}`, { user: "u1" });
     expect((afterVoid.body as { status: string }).status).toBe("overdue");
   });
+
+  it("due_today は Today のセクション・statusフィルタ・overdueDays に反映される", async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    // interval=7 warning=2 grace=3: 経過 5/7/9/12 日 → upcoming/due_today/recommended/overdue
+    const specs: Array<[string, number, string]> = [
+      ["経過5日", 5, "upcoming"],
+      ["経過7日", 7, "due_today"],
+      ["経過9日", 9, "recommended"],
+      ["経過12日", 12, "overdue"],
+    ];
+    const ids: Record<string, string> = {};
+    let n = 0;
+    for (const [name, elapsed] of specs) {
+      const created = await call("POST", "chores", {
+        user: "u1",
+        body: { name, intervalDays: 7, warningDays: 2, graceDays: 3 },
+      });
+      const id = (created.body as { chore: { id: string } }).chore.id;
+      ids[name] = id;
+      n += 1;
+      await call("POST", `chores/${id}/events`, {
+        user: "u1",
+        body: {
+          clientRequestId: `aaaaaaaa-bbbb-4ccc-8ddd-00000000000${n}`,
+          occurredAt: new Date(Date.now() - elapsed * DAY).toISOString(),
+        },
+      });
+    }
+
+    type Item = { id: string; status: string; overdueDays: number | null };
+    const today = await call("GET", "chores/today", { user: "u1" });
+    const sections = (today.body as { sections: Record<string, Item[]> })
+      .sections;
+    expect(sections.dueToday.map((c) => c.id)).toEqual([ids["経過7日"]]);
+    expect(sections.dueToday[0].status).toBe("due_today");
+    expect(sections.dueToday[0].overdueDays).toBe(0);
+    expect(sections.recommended[0].overdueDays).toBe(2);
+    expect(sections.overdue[0].overdueDays).toBe(5);
+    expect(sections.upcoming.map((c) => c.id)).toEqual([ids["経過5日"]]);
+
+    const filtered = await call("GET", "chores", {
+      user: "u1",
+      query: { status: "due_today" },
+    });
+    expect(filtered.status).toBe(200);
+    expect((filtered.body as { items: Item[] }).items.map((c) => c.id)).toEqual(
+      [ids["経過7日"]],
+    );
+
+    const sorted = await call("GET", "chores", { user: "u1" });
+    expect(
+      (sorted.body as { items: Item[] }).items.map((c) => c.status),
+    ).toEqual(["overdue", "recommended", "due_today", "upcoming"]);
+  });
 });
 
 describe("AIルート", () => {

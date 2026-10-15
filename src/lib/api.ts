@@ -9,6 +9,7 @@ import { auth } from "./firebase";
 export type ChoreStatus =
   | "not_due"
   | "upcoming"
+  | "due_today"
   | "recommended"
   | "overdue"
   | "never_done"
@@ -110,6 +111,7 @@ export interface NotificationSettingsDto {
 export interface TodaySections {
   overdue: ChoreDto[];
   recommended: ChoreDto[];
+  dueToday: ChoreDto[];
   upcoming: ChoreDto[];
   neverDone: ChoreDto[];
   doneToday: ChoreDto[];

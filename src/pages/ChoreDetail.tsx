@@ -152,7 +152,7 @@ export default function ChoreDetail() {
     <>
       <PageHeader title={chore.name} back />
       <section className="detail-block">
-        <StatusBadge status={chore.status} />
+        <StatusBadge status={chore.status} overdueDays={chore.overdueDays} />
         {!chore.isActive && (
           <p className="detail-note">この家事は無効化されています。</p>
         )}

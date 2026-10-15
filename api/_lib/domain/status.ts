@@ -1,9 +1,10 @@
 import { addCalendarDays, elapsedCalendarDays, localDate } from "./calendar.js";
 
-/** 設計書 §7.1 の内部値。 */
+/** 設計書 §7.1 の内部値(`due_today` は 2026-10-15 追加)。 */
 export type ChoreStatus =
   | "not_due"
   | "upcoming"
+  | "due_today"
   | "recommended"
   | "overdue"
   | "never_done"
@@ -26,6 +27,7 @@ export interface ComputeChoreStatusResult {
   /** `elapsedDays - intervalDays`。ソート用。履歴が無い/無効の場合は null。 */
   overdueDays: number | null;
   /** 次に状態が変わる日付("YYYY-MM-DD"、家庭のタイムゾーン)。overdue/never_done/inactive は null。 */
+  // 各状態の次の変化日: not_due→予告開始日、upcoming→今日やる日、due_today→翌日、recommended→優先になる日。
   nextChangeDate: string | null;
 }
 
@@ -119,8 +121,11 @@ export function computeChoreStatus(
   if (elapsedDays < intervalDays - warningDays) {
     status = "not_due";
     nextChangeDate = addCalendarDays(lastDate, intervalDays - warningDays);
-  } else if (elapsedDays <= intervalDays) {
+  } else if (elapsedDays < intervalDays) {
     status = "upcoming";
+    nextChangeDate = addCalendarDays(lastDate, intervalDays);
+  } else if (elapsedDays === intervalDays) {
+    status = "due_today";
     nextChangeDate = addCalendarDays(lastDate, intervalDays + 1);
   } else if (elapsedDays <= intervalDays + graceDays) {
     status = "recommended";

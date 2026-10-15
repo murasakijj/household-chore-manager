@@ -44,10 +44,10 @@ GitHub Actions（毎時）/ Vercel Cron（毎日）→ /api/cron/daily-summary
 | `calendar.ts` | `localDate(instant, tz) → "YYYY-MM-DD"`、`diffCalendarDays(a, b)`（`Intl.DateTimeFormat` で暦日化し `Date.UTC` で差分。外部ライブラリ不要） |
 | `status.ts` | `computeChoreStatus({isActive, lastCompletedAt, intervalDays, warningDays, graceDays, now, timezone}) → {status, elapsedDays, overdueDays, nextChangeDate}`（設計書 §7.4 を厳守）。`defaultWarningGrace(intervalDays)`（§7.6）、`validateIntervals`（§7.4 制約） |
 | `ordering.ts` | 状態順・超過日数・名称の比較関数（§12.3）。ホーム・一覧・通知で共通使用 |
-| `today.ts` | ホームのセクション分け（優先/今日やった方がよい/そろそろ/初回未実施/本日実施済み、not_due は件数のみ） |
+| `today.ts` | ホームのセクション分け（優先/超過/今日やる日/そろそろ/初回未実施/本日実施済み、not_due は件数のみ） |
 | `summary.ts` | 朝のまとめ通知の対象抽出と文面生成（§12.1〜12.3、§7.7 の「初回記録待ち」） |
 
-状態値・表示名・色は **サーバーは内部値のみ返す**。表示名・色・アイコンの定義は `src/lib/statusMeta.ts` 1箇所に置く（設計書 §14.4）。
+状態値・表示名・色は **サーバーは内部値のみ返す**。表示名（区分名）・状態バッジ文言（`statusBadgeLabel(status, overdueDays)`、recommended「○日超過」/ overdue「優先・○日超過」）・色・アイコンの定義は `src/lib/statusMeta.ts` 1箇所に置く（設計書 §7.1, §14.4）。`overdueDays` は全レスポンスの家事DTOに含まれる。
 
 ## データモデル（Firestore）
 
@@ -92,10 +92,10 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 | Method | Path | 備考 |
 | --- | --- | --- |
 | GET | `/api/auth-check` | 200 `{ok:true, member, household}` |
-| GET | `/api/chores` | `status, areaId, categoryId, q, includeInactive, sort=status\|elapsed\|name`。各家事に `status, elapsedDays, lastCompletedAt, nextChangeDate` を付与 |
+| GET | `/api/chores` | `status, areaId, categoryId, q, includeInactive, sort=status\|elapsed\|name`。各家事に `status, elapsedDays, overdueDays, lastCompletedAt, nextChangeDate` を付与 |
 | POST | `/api/chores` | 同名があれば `warnings:["duplicate_name"]` を返す（保存はする）。任意 `lastCompletedAt` 指定時は completed イベントを1件作る |
 | POST | `/api/chores/bulk` | 一括提案からの登録（最大50件） |
-| GET | `/api/chores/today` | `{sections:{overdue, recommended, upcoming, neverDone, doneToday}, notDueCount}` |
+| GET | `/api/chores/today` | `{sections:{overdue, recommended, dueToday, upcoming, neverDone, doneToday}, notDueCount}` |
 | GET/PATCH | `/api/chores/{id}` | 詳細は最近の履歴20件・平均実施間隔（有効履歴2件以上）を含む。PATCH で `isActive:false` = 無効化 |
 | POST | `/api/chores/{id}/events` | `{clientRequestId, occurredAt?, actorMemberId?, note?}`。未来日時は400。冪等・`possibleDuplicate` |
 | GET | `/api/chores/{id}/events` | カーソルページネーション、`includeVoided` |

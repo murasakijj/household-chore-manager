@@ -10,6 +10,7 @@ export interface TodayChoreInput extends OrderableChore {
 export interface TodaySections<T> {
   overdue: T[];
   recommended: T[];
+  dueToday: T[];
   upcoming: T[];
   neverDone: T[];
   doneToday: T[];
@@ -32,6 +33,7 @@ export function buildTodaySections<T extends TodayChoreInput>(
 ): BuildTodaySectionsResult<T> {
   const overdue: T[] = [];
   const recommended: T[] = [];
+  const dueToday: T[] = [];
   const upcoming: T[] = [];
   const neverDone: T[] = [];
   const doneToday: T[] = [];
@@ -44,6 +46,9 @@ export function buildTodaySections<T extends TodayChoreInput>(
         break;
       case "recommended":
         recommended.push(chore);
+        break;
+      case "due_today":
+        dueToday.push(chore);
         break;
       case "upcoming":
         upcoming.push(chore);
@@ -66,12 +71,20 @@ export function buildTodaySections<T extends TodayChoreInput>(
 
   overdue.sort(compareChoresForDisplay);
   recommended.sort(compareChoresForDisplay);
+  dueToday.sort(compareChoresForDisplay);
   upcoming.sort(compareChoresForDisplay);
   neverDone.sort(compareChoresForDisplay);
   doneToday.sort(compareChoresForDisplay);
 
   return {
-    sections: { overdue, recommended, upcoming, neverDone, doneToday },
+    sections: {
+      overdue,
+      recommended,
+      dueToday,
+      upcoming,
+      neverDone,
+      doneToday,
+    },
     notDueCount,
   };
 }
