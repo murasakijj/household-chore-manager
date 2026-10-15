@@ -41,3 +41,40 @@
   - 対象0件（送るべき家事が無い）、または購読が0件（通知を受け取る端末が無い）の場合は「当日完了」扱いとし、`lastSentLocalDate` を更新したまま次の実行では再試行しない。
   - 購読は1件以上あるのに1件も届かず、失敗がすべて一時的なもの（404/410で購読を削除したもの以外。ネットワークエラー・タイムアウト・5xx等）だった場合のみ、`lastSentLocalDate` を claim 前の値へ補償的に書き戻し、次の毎時実行で再送を試みる。
   - 少なくとも1台に届けば「送信済み」として扱い、他の端末が失敗していても再試行はしない（設計書 §12 は「利用者ごとに1日1回」が基本のため、一部端末への再送のために日をまたいで送り続けることはしない）。
+
+## 状態判定とラベルの変更（2026-10-15 ユーザー決定）
+
+設計書 §7.1 / §7.4 / §7.5 / §8.2 / §12 / §16.1 を次のとおり変更した（設計書側も更新済み）。
+
+1. 経過日数 = 推奨間隔の日を「今日やる日」として独立した状態 `due_today` にする。
+2. 経過日数 > 推奨間隔のものは、過ぎていることが分かる表示にする。
+
+理由: 旧仕様では推奨間隔ちょうどの日が `upcoming`（そろそろ）に含まれ、「今日が実施日」であることが伝わらなかった。また `recommended` / `overdue` のラベルだけでは、どれだけ過ぎているかが一覧で分からなかった。
+
+判定式（`api/_lib/domain/status.ts`）:
+
+```text
+inactive → inactive / 履歴なし → never_done
+elapsed <  interval - warning → not_due
+elapsed <  interval           → upcoming   （旧: <=）
+elapsed == interval           → due_today  （新設）
+elapsed <= interval + grace   → recommended
+それ以外                      → overdue
+```
+
+変更前後の対応（間隔7・予告2・猶予3）:
+
+| 経過日数 | 変更前（内部値 / 表示名） | 変更後（内部値 / 区分名 / バッジ） |
+| ---: | --- | --- |
+| 0〜4 | `not_due` / まだ不要 | 同左 |
+| 5〜6 | `upcoming` / そろそろ | 同左 |
+| 7 | `upcoming` / そろそろ | `due_today` / 今日やる日 / 今日やる日 |
+| 8〜10 | `recommended` / 今日やった方がよい | `recommended` / 超過 / 「1〜3日超過」 |
+| 11〜 | `overdue` / 優先 | `overdue` / 優先 / 「優先・4日超過」〜 |
+
+- 内部値 `recommended` / `overdue` は名前を変えない（DB・API互換のため）。`due_today` を追加。
+- 区分名（セクション見出し・フィルタ）とバッジ文言は `src/lib/statusMeta.ts` が唯一の定義場所。バッジ文言は `statusBadgeLabel(status, overdueDays)`。`overdueDays`（= 経過日数 − 推奨間隔）はサーバーが全レスポンスで返す。判定式はクライアントに書かない。
+- ホーム表示順: 優先 → 超過 → 今日やる日 → そろそろ → 初回未実施 → 本日実施済み。`GET /api/chores/today` に `dueToday` を追加。
+- 朝のまとめ通知: 対象は overdue・recommended・due_today（upcoming は設定で追加）。例 `今日の家事: 優先1件、超過2件、今日やる日1件`（0件の区分は省略）。
+- `warningDays = 0` では upcoming が出ず not_due → due_today。入力制約（§7.4）と §7.6 の初期値は変更しない。
+- 移行不要: 状態は Firestore に保存せず、リクエストごとに `lastCompletedAt` と間隔から算出する。保存済みデータ・インデックスへの影響はない。

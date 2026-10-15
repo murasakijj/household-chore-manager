@@ -89,6 +89,11 @@ export default function Today() {
       items: data.sections.recommended,
     },
     {
+      key: "dueToday",
+      title: STATUS_META.due_today.label,
+      items: data.sections.dueToday,
+    },
+    {
       key: "upcoming",
       title: STATUS_META.upcoming.label,
       items: data.sections.upcoming,

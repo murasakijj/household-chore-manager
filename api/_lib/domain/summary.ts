@@ -29,19 +29,30 @@ export interface DailySummaryResult {
   lines: string[];
   /** `lines.join("\n")`。 */
   text: string;
-  /** 通知対象となった家事ID(overdue/recommended/(upcoming))。表示順。 */
+  /** 通知対象となった家事ID(overdue/recommended/due_today/(upcoming))。表示順。 */
   targetChoreIds: string[];
 }
 
-const STATUS_LABEL: Record<"overdue" | "recommended" | "upcoming", string> = {
+/** 通知対象になり得る状態。並びは設計書 §12.3 の優先順位。 */
+const SUMMARY_STATUSES = [
+  "overdue",
+  "recommended",
+  "due_today",
+  "upcoming",
+] as const;
+type SummaryStatus = (typeof SUMMARY_STATUSES)[number];
+
+/** 通知文面の区分名。フロントの区分名(`statusMeta.ts`)と揃える(設計書 §7.1)。 */
+const STATUS_LABEL: Record<SummaryStatus, string> = {
   overdue: "優先",
-  recommended: "やった方がよい",
+  recommended: "超過",
+  due_today: "今日やる日",
   upcoming: "そろそろ",
 };
 
 /**
  * 朝のまとめ通知の対象抽出と文面生成(設計書 §12.1〜12.3, §7.7)。
- * 対象(overdue/recommended、設定により+upcoming)が0件なら通知しない(null)。
+ * 対象(overdue/recommended/due_today、設定により+upcoming)が0件なら通知しない(null)。
  * 「初回記録待ち」は、通知対象が1件以上あるときにのみ末尾に付与する
  * (設計書は「まとめ通知の末尾に」とあり、通知そのものが無ければ末尾も無い前提の実装)。
  */
@@ -51,7 +62,11 @@ export function buildDailySummary(
   const { chores, now, timezone, includeUpcoming } = input;
 
   const targets = chores.filter((chore) => {
-    if (chore.status === "overdue" || chore.status === "recommended") {
+    if (
+      chore.status === "overdue" ||
+      chore.status === "recommended" ||
+      chore.status === "due_today"
+    ) {
       return true;
     }
     if (chore.status === "upcoming" && includeUpcoming) {
@@ -66,22 +81,17 @@ export function buildDailySummary(
 
   const sorted = [...targets].sort(compareChoresForDisplay);
 
-  const counts: Partial<
-    Record<"overdue" | "recommended" | "upcoming", number>
-  > = {};
+  const counts: Partial<Record<SummaryStatus, number>> = {};
   for (const chore of sorted) {
-    if (
-      chore.status === "overdue" ||
-      chore.status === "recommended" ||
-      chore.status === "upcoming"
-    ) {
-      counts[chore.status] = (counts[chore.status] ?? 0) + 1;
+    if ((SUMMARY_STATUSES as readonly string[]).includes(chore.status)) {
+      const status = chore.status as SummaryStatus;
+      counts[status] = (counts[status] ?? 0) + 1;
     }
   }
 
-  const summarySegments = (["overdue", "recommended", "upcoming"] as const)
-    .filter((status) => (counts[status] ?? 0) > 0)
-    .map((status) => `${STATUS_LABEL[status]}${counts[status]}件`);
+  const summarySegments = SUMMARY_STATUSES.filter(
+    (status) => (counts[status] ?? 0) > 0,
+  ).map((status) => `${STATUS_LABEL[status]}${counts[status]}件`);
   const line1 = `今日の家事: ${summarySegments.join("、")}`;
 
   const namedCount = Math.min(MAX_NAMED_ITEMS, sorted.length);

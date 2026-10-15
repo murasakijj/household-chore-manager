@@ -26,7 +26,8 @@ describe("computeChoreStatus 境界値(設計書 §16.1, interval=7 warning=2 gr
     [0, "not_due"],
     [4, "not_due"],
     [5, "upcoming"],
-    [7, "upcoming"],
+    [6, "upcoming"],
+    [7, "due_today"],
     [8, "recommended"],
     [10, "recommended"],
     [11, "overdue"],
@@ -180,7 +181,7 @@ describe("computeChoreStatus 追加ケース", () => {
       timezone: "Asia/Tokyo",
     });
     expect(utcResult.elapsedDays).toBe(1);
-    expect(utcResult.status).toBe("upcoming"); // elapsed(1) <= interval(1)
+    expect(utcResult.status).toBe("due_today"); // elapsed(1) == interval(1)
     expect(jstResult.elapsedDays).toBe(0);
     expect(jstResult.status).toBe("not_due"); // elapsed(0) < interval-warning(1)
   });
@@ -270,7 +271,53 @@ describe("computeChoreStatus 追加ケース", () => {
       timezone: TZ,
     });
     expect(result.status).toBe("upcoming");
-    expect(result.nextChangeDate).toBe("2026-01-09"); // elapsed=8から recommended
+    expect(result.nextChangeDate).toBe("2026-01-08"); // elapsed=7から due_today
+  });
+
+  it("due_today の nextChangeDate は翌日(recommended に切り替わる日)", () => {
+    const result = computeChoreStatus({
+      isActive: true,
+      lastCompletedAt: jst("2026-01-01"),
+      intervalDays: 7,
+      warningDays: 2,
+      graceDays: 3,
+      now: jst("2026-01-08"), // elapsed=7 → due_today
+      timezone: TZ,
+    });
+    expect(result.status).toBe("due_today");
+    expect(result.overdueDays).toBe(0);
+    expect(result.nextChangeDate).toBe("2026-01-09");
+  });
+
+  it("猶予0日の due_today の nextChangeDate は翌日(overdue に切り替わる日)", () => {
+    const result = computeChoreStatus({
+      isActive: true,
+      lastCompletedAt: jst("2026-01-01"),
+      intervalDays: 7,
+      warningDays: 2,
+      graceDays: 0,
+      now: jst("2026-01-08"),
+      timezone: TZ,
+    });
+    expect(result.status).toBe("due_today");
+    expect(result.nextChangeDate).toBe("2026-01-09");
+  });
+
+  it("overdueDays は elapsed - interval(recommended / overdue で正の値)", () => {
+    const base = {
+      isActive: true,
+      lastCompletedAt: jst("2026-01-01"),
+      intervalDays: 7,
+      warningDays: 2,
+      graceDays: 3,
+      timezone: TZ,
+    };
+    const rec = computeChoreStatus({ ...base, now: jst("2026-01-10") }); // elapsed=9
+    expect(rec.status).toBe("recommended");
+    expect(rec.overdueDays).toBe(2);
+    const over = computeChoreStatus({ ...base, now: jst("2026-01-13") }); // elapsed=12
+    expect(over.status).toBe("overdue");
+    expect(over.overdueDays).toBe(5);
   });
 
   it("recommended の nextChangeDate は overdue に切り替わる日(レビュー指摘 #13)", () => {
@@ -285,6 +332,47 @@ describe("computeChoreStatus 追加ケース", () => {
     });
     expect(result.status).toBe("recommended");
     expect(result.nextChangeDate).toBe("2026-01-12"); // elapsed=11から overdue
+  });
+});
+
+describe("computeChoreStatus warning=0 / interval=1", () => {
+  it("warning=0 では upcoming が出ず not_due → due_today になる", () => {
+    const statuses = [];
+    for (let elapsed = 0; elapsed <= 10; elapsed++) {
+      const r = computeChoreStatus({
+        isActive: true,
+        lastCompletedAt: jst("2026-01-01"),
+        intervalDays: 7,
+        warningDays: 0,
+        graceDays: 3,
+        now: jst(`2026-01-${String(1 + elapsed).padStart(2, "0")}`),
+        timezone: TZ,
+      });
+      statuses.push(r.status);
+    }
+    expect(statuses).toEqual([
+      ...Array(7).fill("not_due"),
+      "due_today",
+      "recommended",
+      "recommended",
+      "recommended",
+    ]);
+  });
+
+  it("interval=1 warning=0 grace=1: 0 not_due / 1 due_today / 2 recommended / 3 overdue", () => {
+    const expected = ["not_due", "due_today", "recommended", "overdue"];
+    expected.forEach((status, elapsed) => {
+      const r = computeChoreStatus({
+        isActive: true,
+        lastCompletedAt: jst("2026-01-01"),
+        intervalDays: 1,
+        warningDays: 0,
+        graceDays: 1,
+        now: jst(`2026-01-${String(1 + elapsed).padStart(2, "0")}`),
+        timezone: TZ,
+      });
+      expect(r.status).toBe(status);
+    });
   });
 });
 

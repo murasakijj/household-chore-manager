@@ -9,6 +9,7 @@ import { auth } from "./firebase";
 export type ChoreStatus =
   | "not_due"
   | "upcoming"
+  | "due_today"
   | "recommended"
   | "overdue"
   | "never_done"
@@ -110,6 +111,7 @@ export interface NotificationSettingsDto {
 export interface TodaySections {
   overdue: ChoreDto[];
   recommended: ChoreDto[];
+  dueToday: ChoreDto[];
   upcoming: ChoreDto[];
   neverDone: ChoreDto[];
   doneToday: ChoreDto[];
@@ -450,7 +452,10 @@ export async function getInitialChoreTemplates(): Promise<{
 
 export async function bulkCreateChores(
   items: ChoreCreateInput[],
-): Promise<{ created: ChoreDto[]; warnings: Array<{ index: number; warnings: string[] }> }> {
+): Promise<{
+  created: ChoreDto[];
+  warnings: Array<{ index: number; warnings: string[] }>;
+}> {
   return request("POST", "chores/bulk", { body: { items } });
 }
 

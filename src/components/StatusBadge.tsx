@@ -1,16 +1,18 @@
 import type { ChoreStatus } from "../lib/api";
-import { statusMeta } from "../lib/statusMeta";
+import { statusBadgeLabel, statusMeta } from "../lib/statusMeta";
 
 export default function StatusBadge({
   status,
+  overdueDays,
 }: {
   status: ChoreStatus | null | undefined;
+  overdueDays?: number | null;
 }) {
   const meta = statusMeta(status);
   return (
     <span className={`status-badge status-badge--${meta.key}`}>
       <span aria-hidden="true">{meta.icon}</span>
-      {meta.label}
+      {statusBadgeLabel(status, overdueDays)}
     </span>
   );
 }

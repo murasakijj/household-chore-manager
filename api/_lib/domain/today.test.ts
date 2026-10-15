@@ -18,7 +18,9 @@ describe("buildTodaySections(設計書 §8.2)", () => {
       chore("2", "recommended", 8, 1),
       chore("3", "upcoming", 5, -2),
       chore("4", "never_done", null),
+      chore("5", "due_today", 7, 0),
     ]);
+    expect(sections.dueToday.map((c) => c.id)).toEqual(["5"]);
     expect(sections.overdue.map((c) => c.id)).toEqual(["1"]);
     expect(sections.recommended.map((c) => c.id)).toEqual(["2"]);
     expect(sections.upcoming.map((c) => c.id)).toEqual(["3"]);
@@ -41,6 +43,7 @@ describe("buildTodaySections(設計書 §8.2)", () => {
     ]);
     expect(sections.overdue).toEqual([]);
     expect(sections.recommended).toEqual([]);
+    expect(sections.dueToday).toEqual([]);
     expect(sections.upcoming).toEqual([]);
     expect(sections.neverDone).toEqual([]);
     expect(sections.doneToday).toEqual([]);

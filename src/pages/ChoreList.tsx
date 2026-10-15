@@ -19,6 +19,7 @@ import { STATUS_META } from "../lib/statusMeta";
 const STATUS_OPTIONS: ChoreStatus[] = [
   "overdue",
   "recommended",
+  "due_today",
   "upcoming",
   "not_due",
   "never_done",

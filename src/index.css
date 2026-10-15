@@ -17,6 +17,8 @@
   --status-overdue-text: #7f2318;
   --status-recommended-bg: #fde6cd;
   --status-recommended-text: #7a4308;
+  --status-due_today-bg: #d9e8fb;
+  --status-due_today-text: #123c75;
   --status-upcoming-bg: #fbf1c7;
   --status-upcoming-text: #6b5a05;
   --status-not_due-bg: #e3ede0;
@@ -261,6 +263,10 @@ textarea {
 .status-badge--recommended {
   background: var(--status-recommended-bg);
   color: var(--status-recommended-text);
+}
+.status-badge--due_today {
+  background: var(--status-due_today-bg);
+  color: var(--status-due_today-text);
 }
 .status-badge--upcoming {
   background: var(--status-upcoming-bg);

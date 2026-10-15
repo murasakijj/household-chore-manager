@@ -21,7 +21,7 @@ export default function ChoreCard({
       <div className="chore-card-main">
         <div className="chore-card-title-row">
           <span className="chore-card-name">{chore.name}</span>
-          <StatusBadge status={chore.status} />
+          <StatusBadge status={chore.status} overdueDays={chore.overdueDays} />
         </div>
         <div className="chore-card-meta">
           {areaName && <span>{areaName}</span>}

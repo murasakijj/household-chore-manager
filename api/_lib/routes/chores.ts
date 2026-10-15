@@ -52,6 +52,7 @@ export async function getToday(ctx: RouteCtx): Promise<RouteResult> {
     sections: {
       overdue: result.sections.overdue.map(choreDto),
       recommended: result.sections.recommended.map(choreDto),
+      dueToday: result.sections.dueToday.map(choreDto),
       upcoming: result.sections.upcoming.map(choreDto),
       neverDone: result.sections.neverDone.map(choreDto),
       doneToday: result.sections.doneToday.map(choreDto),
