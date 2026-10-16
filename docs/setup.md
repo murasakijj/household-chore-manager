@@ -11,6 +11,7 @@
 3. **Authentication > Settings >承認済みドメイン** に、後述の Vercel 本番URL
    (例 `household-chore-manager.vercel.app`)を追加する(デプロイ後でよい)。
 4. **Firestore Database** を作成する(本番モードでよい。ルールは後述の手順で上書きする)。
+   ロケーションは東京(asia-northeast1)推奨。Vercel Functions のリージョンと同じ地域にそろえること。
 5. サービスアカウントJSONを取得する: **プロジェクトの設定 > サービスアカウント >
    新しい秘密鍵の生成**。ダウンロードしたJSONは1行に整形して控えておく
    (Vercel の `FIREBASE_SERVICE_ACCOUNT` に使う)。
@@ -111,6 +112,9 @@ openssl rand -base64 32
 4. **`VITE_` から始まる環境変数を追加・変更したときは、必ず Vercel で再デプロイする**
    (Redeploy)。ビルド時に埋め込まれるため、環境変数を保存しただけでは既存の
    デプロイには反映されない。
+5. `vercel.json` の `regions` で hnd1(東京)に固定している。Firestore を別ロケーションで
+   作った場合はそれに近いリージョンへ変更すること(例: 大阪 asia-northeast2 → kix1)。
+   離れていると API ごとに Firestore 往復が太平洋を渡り大幅に遅くなる。
 
 ## 6. GitHub Actions secrets(朝のまとめ通知)
 

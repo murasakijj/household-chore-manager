@@ -10,7 +10,7 @@
 | バックエンド | Vercel Functions（Node.js 22, `api/`）。**全データアクセスはAPI経由** | 設計書 §11.4「状態はサーバー側で算出」「household_id をクライアントから信用しない」を素直に満たすため。クライアントからの Firestore 直アクセスは使わない |
 | DB | Cloud Firestore（firebase-admin からのみアクセス）。セキュリティルールはクライアント全拒否 | 無料枠、recipe-buddy と同じ Firebase プロジェクト運用。マイグレーションの代わりにドキュメントへ `schemaVersion` を持たせる |
 | 認証 | Firebase Authentication（Google）。サーバーは `requireAuth`（IDトークン検証 + `ALLOWED_EMAILS`）を全APIで通す | recipe-buddy の実装をほぼ移植。`ALLOWED_EMAILS=u9c3300232346g@gmail.com` とし、本人以外は403 |
-| ホスティング | Vercel（Hobby） | ユーザー指定 |
+| ホスティング | Vercel（Hobby）。関数リージョンは Firestore と同じ東京（hnd1）に固定（2026-10-16、遅延の実測対応） | ユーザー指定。既定の iad1 では Firestore（東京）との往復で画面遷移が遅かった |
 | Push通知方式 | Web Push（VAPID, `web-push`）+ PWA（manifest + service worker）。送信ジョブは `POST /api/cron/daily-summary`（`CRON_SECRET` 認証）を GitHub Actions で毎時起動 | Vercel Hobby の Cron は1日1回のみで利用者ごとの通知時刻に対応できないため。Vercel Cron（毎日 23:00 UTC = 08:00 JST）も保険として併用し、送信済み判定で二重送信しない |
 | 利用者 | 本人のみで開始。データ構造は household / member を持ち、将来メンバー追加可能 | ユーザー指定 |
 
