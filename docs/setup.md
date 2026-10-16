@@ -114,7 +114,8 @@ openssl rand -base64 32
    デプロイには反映されない。
 5. `vercel.json` の `regions` で hnd1(東京)に固定している。Firestore を別ロケーションで
    作った場合はそれに近いリージョンへ変更すること(例: 大阪 asia-northeast2 → kix1)。
-   離れていると API ごとに Firestore 往復が太平洋を渡り大幅に遅くなる。
+   地理的に離れていると Firestore との往復のたびに遅延が大きくなる。
+   ダッシュボードの Function Region 設定より `vercel.json` の `regions` が優先される。
 
 ## 6. GitHub Actions secrets(朝のまとめ通知)
 

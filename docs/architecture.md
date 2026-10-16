@@ -24,7 +24,7 @@ GitHub Actions（毎時）/ Vercel Cron（毎日）→ /api/cron/daily-summary
 `vercel.json`:
 
 - `regions`: `["hnd1"]`（関数を Firestore と同じ東京に固定。既定の iad1 だと API ごとに太平洋を往復して遅い）
-- `rewrites`: `/api/:path*` → `/api/router?__path=:path*`、それ以外 → `/index.html`（SPA）
+- `rewrites`: `/api/(.*)` → `/api/router?__path=$1`、それ以外 → `/index.html`（SPA）
 - `crons`: `{"path": "/api/cron/daily-summary", "schedule": "0 23 * * *"}`（Vercel Cron は GET で `Authorization: Bearer $CRON_SECRET` を付ける）
 - `functions.api/router.ts.maxDuration`: 60
 
