@@ -33,6 +33,10 @@
 - 通知: Web Push(VAPID)。送信ジョブ `POST /api/cron/daily-summary` を
   GitHub Actions(毎時)+ Vercel Cron(毎日、保険)から起動
 
+このアプリの Firebase プロジェクトは money-lens・recipe-buddy・fridge-track と共有しており、
+`firebase/`(ルール・インデックス)がその正本。経緯は
+[docs/firebase-consolidation.md](./docs/firebase-consolidation.md) を参照。
+
 詳細は [docs/architecture.md](./docs/architecture.md)、実装判断の経緯は
 [docs/decisions.md](./docs/decisions.md) を参照。
 
@@ -56,7 +60,9 @@ npm run dev
 | `npm run lint` | ESLint |
 | `npm run format` | Prettier |
 | `npm test` | ユニット・結合テスト(`MemoryRepo`、Firestore不要) |
-| `npm run test:emulator` | Firestoreエミュレータに実接続する結合テスト(`firebase-tools` が必要) |
+| `npm run test:emulator` | Firestoreエミュレータに実接続するテスト(結合・統合ルール・移行。`firebase-tools` が必要) |
+| `npm run deploy:firestore` | 統合 Firestore ルール・インデックスのデプロイ(`RULES_ALLOWED_EMAILS` 必須) |
+| `npm run migrate:firebase` | 他アプリ(recipe-buddy / fridge-track)のデータ移行(既定 dry-run) |
 
 ## ドキュメント
 

@@ -21,18 +21,54 @@
 6. フロント用の公開設定値を控える: **プロジェクトの設定 > 全般 > マイアプリ** で
    ウェブアプリを追加し、`firebaseConfig` の各値(`apiKey` 等)をコピーする。
 
+> **このプロジェクトは4アプリ共有**(household-chore-manager・money-lens・recipe-buddy・
+> fridge-track)。経緯と切り替え全体の手順は
+> [firebase-consolidation.md](./firebase-consolidation.md) を参照。
+
+### 承認済みドメイン(他アプリの追加)
+
+**Authentication > Settings > 承認済みドメイン** に、このアプリに加えて money-lens・
+recipe-buddy・fridge-track の Vercel ドメインもすべて追加する。`VITE_FIREBASE_*` は
+この手順6のウェブアプリ設定を4アプリで共用する。
+
 ### Firestore ルール・インデックスのデプロイ
 
+`firebase/` が4アプリ共通の正本。**他アプリのリポジトリからルールをデプロイしない**
+(1プロジェクトにルールは1つで、上書きすると他アプリのルールが消える)。
+リポジトリ上の許可メールはプレースホルダ(`you@example.com`)なので、専用スクリプトで
+置き換えてからデプロイする。
+
 ```bash
-npm install -g firebase-tools   # 未導入の場合
-firebase login
-firebase use --add               # 上記で作成したプロジェクトIDを選ぶ
-firebase deploy --only firestore:rules,firestore:indexes
+firebase login   # 初回のみ(Firebase CLI は devDependency に含まれる)
+RULES_ALLOWED_EMAILS=you@gmail.com npm run deploy:firestore -- --project <プロジェクトID>
 ```
 
-`firebase/firestore.rules` はクライアントからの直接アクセスを全拒否する
-(全データアクセスは Vercel Functions 経由、decisions.md)。`firebase/firestore.indexes.json`
-は複合インデックス。
+- `RULES_ALLOWED_EMAILS`: 許可するメール(カンマ区切り、`ALLOWED_EMAILS` と同じ人)。未設定・
+  プレースホルダのままなら中断する。プロジェクトIDは `FIREBASE_PROJECT_ID` でも指定できる。
+- 置換済みの生成物は `.generated/`(git 管理外)。`--generate-only` を付けると生成だけ行い
+  デプロイしない。
+- 反映されるのは `firestore:rules` と `firestore:indexes`。
+- ルールの変更時は `npm run test:emulator`(`firebase/firestore.rules.emulator.test.ts`)を通す。
+
+`firebase/firestore.rules` は household-chore-manager のコレクションをクライアントから
+全拒否する(全データアクセスは Vercel Functions 経由、decisions.md)。他アプリ分は
+アプリ別セクションで個別に許可している。`firebase/firestore.indexes.json` は複合インデックス。
+
+### 他アプリのデータ移行(recipe-buddy / fridge-track)
+
+旧プロジェクトのデータを共有プロジェクトへコピーする。利用者のローカルで実行する
+(旧・新それぞれのサービスアカウントJSONが必要)。既定は dry-run。
+
+```bash
+npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com \
+  --old-service-account ./old.json --new-service-account ./new.json            # dry-run
+npm run migrate:firebase -- ... --execute                                      # 実書き込み
+```
+
+詳細・オプション・注意点は
+[scripts/migrate-firebase/README.md](../scripts/migrate-firebase/README.md)。
+アプリごとの切り替え手順(環境変数・再デプロイ・戻し方)は
+[firebase-consolidation.md §3](./firebase-consolidation.md) を参照。
 
 ## 2. VAPID鍵(Web Push)
 
@@ -169,5 +205,5 @@ npm run dev
 npm run lint
 npm run build
 npm test              # ユニット・結合テスト(MemoryRepo、Firestore不要)
-npm run test:emulator # Firestoreエミュレータに実接続する結合テスト(firebase-tools必要)
+npm run test:emulator # Firestoreエミュレータに実接続する結合テスト・ルールテスト・移行テスト(firebase-tools・Java必要)
 ```
