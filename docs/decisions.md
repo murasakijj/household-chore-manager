@@ -78,3 +78,15 @@ elapsed <= interval + grace   → recommended
 - 朝のまとめ通知: 対象は overdue・recommended・due_today（upcoming は設定で追加）。例 `今日の家事: 優先1件、超過2件、今日やる日1件`（0件の区分は省略）。
 - `warningDays = 0` では upcoming が出ず not_due → due_today。入力制約（§7.4）と §7.6 の初期値は変更しない。
 - 移行不要: 状態は Firestore に保存せず、リクエストごとに `lastCompletedAt` と間隔から算出する。保存済みデータ・インデックスへの影響はない。
+
+## Firebase プロジェクトの統合（2026-10-26 ユーザー決定）
+
+目的は Firebase 無料枠（Spark）のプロジェクト数上限の解消。4アプリ（household-chore-manager・money-lens・recipe-buddy・fridge-track）が使う Firebase を、このアプリのプロジェクト（共有プロジェクト）1つに集約する。
+
+- Authentication・Firestore（既定DB1つ）を共有。コレクション名は4アプリ間で衝突しないため名前空間は変えない。
+- ルール・インデックスの正本はこのリポジトリの `firebase/` に一本化（ルールは1プロジェクトに1つのため）。recipe-buddy のワイルドカード許可は使わず、アプリごとにコレクションを明示する。本人判定は fridge-track の厳格版に統一。
+- 許可メールはプレースホルダのままコミットし、`npm run deploy:firestore` が `RULES_ALLOWED_EMAILS` で置換した生成ファイル（git 管理外）をデプロイする。
+- recipe-buddy・fridge-track のデータは `scripts/migrate-firebase/` で旧プロジェクトからコピー（uid 付け替え）。
+- このアプリの機能・データ構造・Firestore へのアクセス方法（API経由のみ）は変えない。
+
+詳細・切り替え手順: [firebase-consolidation.md](./firebase-consolidation.md)

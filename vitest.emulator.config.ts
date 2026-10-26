@@ -6,6 +6,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["api/**/*.emulator.test.ts"],
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+    include: [
+      "api/**/*.emulator.test.ts",
+      "firebase/**/*.emulator.test.ts",
+      "scripts/**/*.emulator.test.ts",
+    ],
   },
 });

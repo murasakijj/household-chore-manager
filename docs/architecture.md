@@ -73,13 +73,15 @@ households/{hid}/notificationSettings/{memberId} { dailySummaryEnabled, dailySum
 households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys:{p256dh, auth}, createdAt }
 ```
 
-- `firebase/firestore.rules`: クライアントは全拒否（`allow read, write: if false;`）。
+- `firebase/` は **4アプリ（household-chore-manager・money-lens・recipe-buddy・fridge-track）が共有する Firebase プロジェクトのルール・インデックスの正本**（[firebase-consolidation.md](./firebase-consolidation.md)）。他リポジトリから単独デプロイしない。デプロイは `npm run deploy:firestore`（[setup.md](./setup.md)）。
+- `firebase/firestore.rules`: アプリ別セクションの統合ルール。household-chore-manager のコレクション（`userMemberships/*`, `households/**`）は明示のマッチを置かず末尾の全拒否に落とす（クライアントは全拒否）。recipe-buddy は `users/{uid}/recipes|techniques` のみ、fridge-track は `users/{uid}/…` の8コレクションを個別制約つきで許可。本人判定は全アプリ共通（許可メール + `email_verified` + Google プロバイダ + uid 一致）。許可メールはリポジトリ上ではプレースホルダで、デプロイ時に `RULES_ALLOWED_EMAILS` で置換する。テストは `firebase/firestore.rules.emulator.test.ts`（`npm run test:emulator`）。
 - `firebase/firestore.indexes.json`: `choreEvents` に以下の複合インデックス。
   - `(choreId ASC, voidedAt ASC, occurredAt DESC)`: 家事別履歴（有効履歴のみ）、`lastCompletedAt` 再計算、possibleDuplicate 判定、`areaId` 絞り込みの `choreId in [...]`
   - `(choreId ASC, occurredAt DESC)`: 家事別履歴（`includeVoided=true`）
   - `(actorMemberId ASC, voidedAt ASC, occurredAt DESC)`: 全体履歴の実施者絞り込み（有効履歴のみ）
   - `(actorMemberId ASC, occurredAt DESC)`: 全体履歴の実施者絞り込み（`includeVoided=true`）
   - `(voidedAt ASC, occurredAt DESC)`: 全体履歴（絞り込み無し、有効履歴のみ）
+- 他アプリ（fridge-track・recipe-buddy）のクエリはいずれも単一フィールドのフィルタ・並べ替えのみで、複合インデックスは不要（調査済み）。他アプリが複合インデックスを必要としたら、このファイルに追加する。
 - 参照整合性: 家事の `areaId`/`categoryId`/`resourceId` は同一家庭のサブコレクションに存在することをサーバーで検証（別家庭は存在しない扱い → 400）。
 
 ### リポジトリ層
