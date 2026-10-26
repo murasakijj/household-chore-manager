@@ -8,6 +8,7 @@ import {
 import {
   getFirestore,
   Timestamp,
+  GeoPoint,
   type Firestore,
 } from "firebase-admin/firestore";
 import { APP_COLLECTIONS, copyUserData, MigrationAbort } from "./copy.js";
@@ -226,5 +227,105 @@ describe("copyUserData", () => {
     expect(
       (await newDb.collection(`users/${dstUid}/foodItems`).get()).size,
     ).toBe(0);
+  });
+
+  it("GeoPoint・Bytes・null・ネストした値が保持される", async () => {
+    const { srcUid, dstUid } = uids();
+    const bytes = Buffer.from([1, 2, 3, 250]);
+    const data = {
+      geo: new GeoPoint(35.68, 139.76),
+      bin: bytes,
+      nothing: null,
+      when: ts,
+      flag: false,
+      num: 1.5,
+      nested: { arr: [1, "a", { k: null }], map: { deep: { t: ts } } },
+    };
+    await oldDb.doc(`users/${srcUid}/recipes/r1`).set(data);
+    await copyUserData({
+      srcDb: oldDb,
+      dstDb: newDb,
+      srcUid,
+      dstUid,
+      collections: APP_COLLECTIONS["recipe-buddy"],
+      execute: true,
+      overwrite: false,
+    });
+    const got = (await newDb.doc(`users/${dstUid}/recipes/r1`).get()).data()!;
+    expect(got.geo).toBeInstanceOf(GeoPoint);
+    expect((got.geo as GeoPoint).isEqual(data.geo)).toBe(true);
+    expect(Buffer.from(got.bin as Uint8Array).equals(bytes)).toBe(true);
+    expect(got.nothing).toBeNull();
+    expect(got.flag).toBe(false);
+    expect(got.num).toBe(1.5);
+    expect(got.when).toBeInstanceOf(Timestamp);
+    expect(got.nested.arr).toEqual([1, "a", { k: null }]);
+    expect(got.nested.map.deep.t.isEqual(ts)).toBe(true);
+  });
+
+  it("親ドキュメントの無いサブコレクションもコピーされる", async () => {
+    const { srcUid, dstUid } = uids();
+    // recipes/ghost 自体は作らず、その配下だけ作る。
+    await oldDb.doc(`users/${srcUid}/recipes/ghost/versions/v1`).set({ n: 1 });
+    const report = await copyUserData({
+      srcDb: oldDb,
+      dstDb: newDb,
+      srcUid,
+      dstUid,
+      collections: APP_COLLECTIONS["recipe-buddy"],
+      execute: true,
+      overwrite: false,
+    });
+    expect(report.srcCounts.recipes).toBe(1);
+    expect(report.dstCounts?.recipes).toBe(1);
+    expect(
+      (
+        await newDb.doc(`users/${dstUid}/recipes/ghost/versions/v1`).get()
+      ).data(),
+    ).toEqual({ n: 1 });
+  });
+
+  it("--collections 相当(コレクション指定)では指定分だけコピーし、残りは別実行でコピーできる", async () => {
+    const { srcUid, dstUid } = uids();
+    await seedFridge(srcUid, 2);
+    await oldDb.doc(`users/${srcUid}/receipts/r1`).set({ a: 1 });
+    const base = {
+      srcDb: oldDb,
+      dstDb: newDb,
+      srcUid,
+      dstUid,
+      execute: true,
+      overwrite: false,
+    };
+    await copyUserData({ ...base, collections: ["foodItems"] });
+    expect(
+      (await newDb.collection(`users/${dstUid}/receipts`).get()).size,
+    ).toBe(0);
+    // 2回目は users/{uid} 本体が既にあっても衝突扱いにならない。
+    const r = await copyUserData({ ...base, collections: ["receipts"] });
+    expect(r.dstCounts).toEqual({ receipts: 1 });
+  });
+
+  it("中断時(既存データあり・overwrite 無し)は新側のドキュメント数が変わらない", async () => {
+    const { srcUid, dstUid } = uids();
+    await seedFridge(srcUid, 4);
+    await newDb.doc(`users/${dstUid}/foodItems/existing`).set({ name: "keep" });
+    const countAll = async () =>
+      (await newDb.collection(`users/${dstUid}/foodItems`).get()).size +
+      (await newDb.collection(`users/${dstUid}/inventoryEvents`).get()).size +
+      Number((await newDb.doc(`users/${dstUid}`).get()).exists);
+    const before = await countAll();
+    await expect(
+      copyUserData({
+        srcDb: oldDb,
+        dstDb: newDb,
+        srcUid,
+        dstUid,
+        collections: APP_COLLECTIONS["fridge-track"],
+        execute: true,
+        overwrite: false,
+      }),
+    ).rejects.toBeInstanceOf(MigrationAbort);
+    expect(await countAll()).toBe(before);
   });
 });

@@ -129,6 +129,74 @@ describe("fridge-track", () => {
     );
   });
 
+  it("foodItems: created_at の変更は拒否される", async () => {
+    const d = doc(me(), `users/${UID}/foodItems/f1`);
+    await assertSucceeds(setDoc(d, foodItem()));
+    await assertFails(
+      updateDoc(d, {
+        created_at: Timestamp.fromMillis(1_000),
+        updated_at: now(),
+      }),
+    );
+  });
+
+  it("inventoryEvents: ADJUST は数量 0 を拒否、非 0 は許可", async () => {
+    const e = (id: string) => doc(me(), `users/${UID}/inventoryEvents/${id}`);
+    await assertFails(
+      setDoc(e("a0"), event({ event_type: "ADJUST", quantity_delta: 0 })),
+    );
+    await assertSucceeds(
+      setDoc(e("a1"), event({ event_type: "ADJUST", quantity_delta: -3 })),
+    );
+  });
+
+  it("receipts / receiptItems は create のみ、制約違反は拒否", async () => {
+    const r = doc(me(), `users/${UID}/receipts/r1`);
+    const receipt = {
+      image_reference: null,
+      purchased_at: now(),
+      created_at: now(),
+    };
+    await assertFails(setDoc(r, { ...receipt, extra: 1 }));
+    await assertFails(setDoc(r, { ...receipt, purchased_at: "2026-01-01" }));
+    await assertSucceeds(setDoc(r, receipt));
+    await assertFails(updateDoc(r, { image_reference: "x" }));
+    await assertFails(deleteDoc(r));
+
+    const i = doc(me(), `users/${UID}/receiptItems/i1`);
+    const item = {
+      receipt_id: "r1",
+      raw_name: "にんじん",
+      food_item_id: null,
+      quantity: 2,
+      unit: "個",
+      confirmed: false,
+      ai_quantity: 2,
+      ai_unit: "個",
+    };
+    await assertFails(setDoc(i, { ...item, quantity: -1 }));
+    await assertFails(setDoc(i, { ...item, confirmed: "no" }));
+    await assertFails(setDoc(i, { ...item, extra: 1 }));
+    await assertSucceeds(setDoc(i, item));
+    await assertFails(updateDoc(i, { confirmed: true }));
+    await assertFails(deleteDoc(i));
+  });
+
+  it("receiptFoodMappings は upsert 可・delete 不可、制約違反は拒否", async () => {
+    const m = doc(me(), `users/${UID}/receiptFoodMappings/m1`);
+    const mapping = {
+      raw_name: "ﾆﾝｼﾞﾝ",
+      food_item_id: "f1",
+      created_at: now(),
+      updated_at: now(),
+    };
+    await assertFails(setDoc(m, { ...mapping, extra: 1 }));
+    await assertFails(setDoc(m, { ...mapping, food_item_id: null }));
+    await assertSucceeds(setDoc(m, mapping));
+    await assertSucceeds(updateDoc(m, { updated_at: now() }));
+    await assertFails(deleteDoc(m));
+  });
+
   it("inventoryLots は create のみ、recipeConsumptions はクライアント書き込み不可", async () => {
     const l = doc(me(), `users/${UID}/inventoryLots/l1`);
     await assertSucceeds(setDoc(l, lot()));

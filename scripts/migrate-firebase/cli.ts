@@ -1,7 +1,8 @@
 /**
  * 使い方は README.md。例:
  *   npm run migrate:firebase -- --app recipe-buddy --email me@example.com \
- *     --old-service-account ./old.json --new-service-account ./new.json [--execute] [--overwrite]
+ *     --old-service-account ~/keys/old-sa.json --new-service-account ~/keys/new-sa.json \
+ *     [--collections a,b] [--execute] [--overwrite]
  */
 import { readFileSync } from "node:fs";
 import { cert, initializeApp } from "firebase-admin/app";
@@ -39,12 +40,19 @@ function parseArgs(argv: string[]) {
 }
 
 function loadServiceAccount(path: string) {
-  const json = JSON.parse(readFileSync(path, "utf8")) as {
-    project_id?: string;
-  };
-  if (!json.project_id)
-    throw new Error("service account JSON has no project_id");
-  return json;
+  // 失敗時は内容の断片を出さないよう、固定メッセージのみ表示する。
+  let json: { project_id?: unknown };
+  try {
+    json = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    throw new Error(
+      "Could not read or parse a service account JSON file (check the path and that it is the downloaded key file).",
+    );
+  }
+  if (typeof json?.project_id !== "string" || !json.project_id) {
+    throw new Error("A service account JSON file has no project_id.");
+  }
+  return json as { project_id: string };
 }
 
 async function resolveUid(
@@ -74,6 +82,17 @@ async function main() {
     throw new Error(
       `--app must be one of: ${Object.keys(APP_COLLECTIONS).join(", ")}`,
     );
+  }
+  const all: readonly string[] = APP_COLLECTIONS[app];
+  const collections = v["--collections"]
+    ? v["--collections"]
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean)
+    : [...all];
+  const unknown = collections.filter((c) => !all.includes(c));
+  if (unknown.length > 0 || collections.length === 0) {
+    throw new Error(`--collections must be a subset of: ${all.join(", ")}`);
   }
   for (const k of [
     "--email",
@@ -106,7 +125,7 @@ async function main() {
     `[uid] resolved old and new uid (${srcUid === dstUid ? "identical" : "different"})`,
   );
   console.log(
-    `[mode] ${execute ? "EXECUTE" : "dry-run"}${overwrite ? " (overwrite)" : ""} app=${app}`,
+    `[mode] ${execute ? "EXECUTE" : "dry-run"}${overwrite ? " (overwrite)" : ""} app=${app} collections=${collections.join(",")}`,
   );
 
   await copyUserData({
@@ -114,7 +133,7 @@ async function main() {
     dstDb: getFirestore(newApp),
     srcUid,
     dstUid,
-    collections: APP_COLLECTIONS[app],
+    collections,
     execute,
     overwrite,
     log: (l) => console.log(l),

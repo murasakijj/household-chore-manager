@@ -39,12 +39,21 @@ recipe-buddy・fridge-track の Vercel ドメインもすべて追加する。`V
 置き換えてからデプロイする。
 
 ```bash
-firebase login   # 初回のみ(Firebase CLI は devDependency に含まれる)
+npx firebase login   # 初回のみ(Firebase CLI は devDependency に含まれる)
 RULES_ALLOWED_EMAILS=you@gmail.com npm run deploy:firestore -- --project <プロジェクトID>
 ```
 
-- `RULES_ALLOWED_EMAILS`: 許可するメール(カンマ区切り、`ALLOWED_EMAILS` と同じ人)。未設定・
-  プレースホルダのままなら中断する。プロジェクトIDは `FIREBASE_PROJECT_ID` でも指定できる。
+> **直接 `firebase deploy` しない。必ず `npm run deploy:firestore` を使う。**
+> リポジトリのルールは許可メールがプレースホルダのままなので、直接デプロイすると
+> 全アプリでログイン後のデータアクセスが拒否される。ルート `firebase.json` には
+> エミュレータ設定しか置いていない(デプロイ対象の設定は生成物 `.generated/firebase.json`)。
+
+- `RULES_ALLOWED_EMAILS`: recipe-buddy・fridge-track を使う人のメール(カンマ区切り。
+  household-chore-manager 側の `ALLOWED_EMAILS` とは別の設定)。小文字に正規化される。
+  未設定・プレースホルダのままなら中断する。
+- `--project <ID>` は必須(環境変数からの補完はしない)。デプロイ前に対象プロジェクトIDと
+  許可メール件数を表示し、プロジェクトIDの再入力を求める(一致しなければ中断)。
+  非対話で実行する場合は `--yes`。
 - 置換済みの生成物は `.generated/`(git 管理外)。`--generate-only` を付けると生成だけ行い
   デプロイしない。
 - 反映されるのは `firestore:rules` と `firestore:indexes`。
@@ -61,9 +70,16 @@ RULES_ALLOWED_EMAILS=you@gmail.com npm run deploy:firestore -- --project <プロ
 
 ```bash
 npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com \
-  --old-service-account ./old.json --new-service-account ./new.json            # dry-run
-npm run migrate:firebase -- ... --execute                                      # 実書き込み
+  --old-service-account ~/keys/old-sa.json --new-service-account ~/keys/new-sa.json   # dry-run
+npm run migrate:firebase -- ... --execute                                             # 実書き込み
 ```
+
+サービスアカウントJSONはリポジトリ外(例 `~/keys/`)に置く。無料枠を超える見込みなら
+`--collections a,b` でコレクションを分けて日をまたいで実行する。
+
+**新 uid の確認(fridge-track のみ)**: 共有プロジェクトの Firebase Console →
+Authentication → ユーザー の「User UID」が新 uid。fridge-track の Vercel 環境変数
+`INVENTORY_OWNER_UID` にこの値を設定する(スクリプトは uid を表示しない)。
 
 詳細・オプション・注意点は
 [scripts/migrate-firebase/README.md](../scripts/migrate-firebase/README.md)。

@@ -17,3 +17,7 @@ firestore-export/
 
 # 生成物(許可メールを埋め込んだルール等。コミットしない)
 .generated/
+
+# サービスアカウントキーの誤コミット防止
+*service-account*.json
+*-sa.json

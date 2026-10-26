@@ -27,7 +27,7 @@
 - **Firestore**: 既定データベース1つ（無料枠は1プロジェクト1データベースのみ）。ロケーションは東京（既存）。コレクションはアプリごとに上表のとおりで、名前空間の変更はしない。
 - **サービスアカウント**:
   - household-chore-manager・fridge-track: Firestore を使うので `FIREBASE_SERVICE_ACCOUNT` を設定。
-  - money-lens・recipe-buddy: **サービスアカウントを渡さない**。`FIREBASE_PROJECT_ID` だけで `verifyIdToken` できるようにコードを変更する（他アプリのデータを読み書きできる権限を持たせないため）。既存の `FIREBASE_SERVICE_ACCOUNT` 指定も後方互換で残す。
+  - money-lens・recipe-buddy: **サービスアカウントを渡さない**。`FIREBASE_PROJECT_ID` だけで `verifyIdToken` できるようにコードを変更する（他アプリのデータを読み書きできる権限を持たせないため）。auth は **`FIREBASE_PROJECT_ID` が設定されていればそれを優先し、`FIREBASE_SERVICE_ACCOUNT` は無視する（警告ログのみ）**。`FIREBASE_PROJECT_ID` が無いときだけ従来の `FIREBASE_SERVICE_ACCOUNT` を使う（後方互換）。共有プロジェクトでは SA を設定しない。
 
 ### 2.2 セキュリティルール・インデックスの一元管理
 
@@ -47,13 +47,13 @@
 
 household-chore-manager の `scripts/migrate-firebase/` に置く。利用者がローカルで実行する（Claude の実行環境からは Firebase に接続できないため）。
 
-- 入力: 旧プロジェクトのサービスアカウント JSON、共有プロジェクトのサービスアカウント JSON、対象アプリ（`recipe-buddy` / `fridge-track`）、本人のメールアドレス。
+- 入力: 旧プロジェクトのサービスアカウント JSON、共有プロジェクトのサービスアカウント JSON、対象アプリ（`recipe-buddy` / `fridge-track`）、本人のメールアドレス、任意で `--collections a,b`（コレクション単位の分割実行）。
 - uid の解決: 旧 uid = 旧プロジェクトの `getUserByEmail`、新 uid = 共有プロジェクトの `getUserByEmail`（家事アプリで既にログイン済みなので存在する。無ければ「新しいアプリで一度ログインしてから再実行」と案内して終了）。
 - コピー: 旧 `users/{旧uid}` のドキュメント（あれば）と、**対象アプリのコレクションだけ**を再帰的に新 `users/{新uid}` 配下へ同じドキュメントIDで書く。Timestamp などの型を保持する。バッチ書き込み（最大500件/回）。
 - `--dry-run`: 書き込まず件数だけ表示。既定は dry-run とし、`--execute` で実書き込み。
 - 冪等: 同じドキュメントIDに `set` するので再実行しても重複しない。コピー先に既にデータがある場合は警告して `--overwrite` 指定時のみ続行。
 - 検証: 実行後、コレクションごとに旧・新の件数を比較して表示。
-- 無料枠への配慮: 読み取り・書き込み件数を事前に表示し、1日の無料枠（読み取り5万・書き込み2万）を超える見込みなら中断して分割実行を案内する。
+- 無料枠への配慮: 読み取り・書き込み件数を事前に表示し、1日の無料枠（読み取り5万・書き込み2万）の **50%**（共有プロジェクトは他アプリも同じ枠を使うため）を超える見込みなら中断し、`--collections` での分割実行を案内する。走査は1ドキュメントあたり約3読み取りで見積もる。
 - ログに書き込むのは件数とコレクション名のみ（ドキュメント本文は出さない）。
 
 ## 3. 切り替え手順（利用者が実施）
@@ -71,7 +71,7 @@ household-chore-manager の `scripts/migrate-firebase/` に置く。利用者が
 | 手順 | money-lens | recipe-buddy | fridge-track |
 | --- | --- | --- | --- |
 | 1. データ移行 | 不要 | スクリプトを dry-run → `--execute` | 同左 |
-| 2. Vercel 環境変数 | `VITE_FIREBASE_*` を共有プロジェクトの値に、`FIREBASE_PROJECT_ID` を設定し `FIREBASE_SERVICE_ACCOUNT` を削除 | 同左 | `VITE_FIREBASE_*`、`FIREBASE_SERVICE_ACCOUNT` を共有プロジェクトのものに、`INVENTORY_OWNER_UID` を新 uid に |
+| 2. Vercel 環境変数 | `VITE_FIREBASE_*` を共有プロジェクトの値に、`FIREBASE_PROJECT_ID` を設定し `FIREBASE_SERVICE_ACCOUNT` を削除（設定が残っていても `FIREBASE_PROJECT_ID` が優先され SA は無視される） | 同左 | `VITE_FIREBASE_*`、`FIREBASE_SERVICE_ACCOUNT` を共有プロジェクトのものに、`INVENTORY_OWNER_UID` を新 uid に（新 uid は共有プロジェクトのコンソール → Authentication → ユーザー の「User UID」で確認。移行スクリプトは uid を表示しない） |
 | 3. 再デプロイ | Vercel で Redeploy（`VITE_*` はビルド時に埋め込まれるため必須） | 同左 | 同左 |
 | 4. 動作確認 | ログイン・データ表示・AI分析 | ログイン・レシピ一覧・編集・AIアレンジ | ログイン・在庫一覧・レシート読み取り・recipe-buddy からの消費連携 |
 

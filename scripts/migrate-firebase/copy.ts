@@ -115,44 +115,65 @@ function mapRef(
   return dstDb.doc(`users/${dstUid}${srcPath.slice(prefix.length)}`);
 }
 
+/** 走査(listDocuments + getAll + listCollections)の1ドキュメントあたり読み取り数の見積もり。 */
+export const SCAN_READS_PER_DOC = 3;
+/** 共有プロジェクトは他アプリも同じ無料枠を使うため、1日枠のこの割合までしか使わない。 */
+export const BUDGET_RATIO = 0.5;
+
 export async function copyUserData(opts: CopyOptions): Promise<CopyReport> {
   const { srcDb, dstDb, srcUid, dstUid, collections, execute, overwrite } =
     opts;
   const log = opts.log ?? (() => {});
   const tier = opts.freeTier ?? FREE_TIER;
+  const budget = {
+    reads: Math.floor(tier.reads * BUDGET_RATIO),
+    writes: Math.floor(tier.writes * BUDGET_RATIO),
+  };
 
   const src = await scan(srcDb, srcUid, collections);
   const dst = await scan(dstDb, dstUid, collections);
-  const copyUserDoc = src.userSnap.exists;
   const dstUserExists = dst.userSnap.exists;
+  // users/{uid} 本体は、コピー先に無い場合か --overwrite のときだけコピーする
+  // (コレクションを分けた複数回実行で、2回目以降に衝突扱いしないため)。
+  const copyUserDoc = src.userSnap.exists && (!dstUserExists || overwrite);
 
   const srcTotal = sum(src.counts) + (copyUserDoc ? 1 : 0);
-  const dstExisting = sum(dst.counts) + (copyUserDoc && dstUserExists ? 1 : 0);
+  const dstExisting = sum(dst.counts);
 
   for (const name of collections) {
     log(
       `[scan] ${name}: source ${src.counts[name]} / destination existing ${dst.counts[name]}`,
     );
   }
-  log(`[scan] users doc: ${copyUserDoc ? "present (will copy)" : "absent"}`);
+  log(
+    `[scan] users doc: ${copyUserDoc ? "will copy" : src.userSnap.exists ? "present at destination (kept; use --overwrite to replace)" : "absent at source"}`,
+  );
 
-  // 無料枠見積もり(プロジェクトごと・1日)。コピー元は走査分、コピー先は事前走査+事後検証。
+  // 無料枠見積もり(プロジェクトごと・1日)。この実行(dry-run の走査を含む)で消費する分と、
+  // --execute 時の見込みを表示する。上限は1日枠の50%(共有プロジェクトは他アプリも使うため)。
+  const srcScanReads =
+    SCAN_READS_PER_DOC * sum(src.counts) + collections.length + 1;
+  const dstScanReads =
+    SCAN_READS_PER_DOC * dstExisting + collections.length + 1;
+  // execute 時はさらにコピー先の検証(書いたドキュメントの getAll、1件1読み取り)が加わる。
   const estimate = {
-    srcReads: srcTotal + collections.length * 2,
-    dstReads: 2 * dstExisting + srcTotal + 2,
+    srcReads: srcScanReads,
+    dstReads: dstScanReads + srcTotal,
     dstWrites: srcTotal,
   };
   log(
-    `[estimate] source reads ~${estimate.srcReads} / destination reads ~${estimate.dstReads}, writes ~${estimate.dstWrites} ` +
-      `(daily free tier: reads ${tier.reads}, writes ${tier.writes})`,
+    `[estimate] reads already used by this scan: source ~${srcScanReads}, destination ~${dstScanReads}. ` +
+      `If executed: source reads ~${estimate.srcReads}, destination reads ~${estimate.dstReads}, destination writes ~${estimate.dstWrites} ` +
+      `(budget = ${BUDGET_RATIO * 100}% of the daily free tier: reads ${budget.reads}, writes ${budget.writes})`,
   );
   if (
-    estimate.srcReads > tier.reads ||
-    estimate.dstReads > tier.reads ||
-    estimate.dstWrites > tier.writes
+    estimate.srcReads > budget.reads ||
+    estimate.dstReads > budget.reads ||
+    estimate.dstWrites > budget.writes
   ) {
     throw new MigrationAbort(
-      "Estimated usage exceeds the daily free tier. Split the run per collection across days " +
+      "Estimated usage exceeds 50% of the daily free tier (the shared project's quota is also used by the other apps). " +
+        "Run per collection on separate days with --collections <name[,name]> " +
         "(or temporarily enable billing).",
     );
   }
@@ -177,14 +198,23 @@ export async function copyUserData(opts: CopyOptions): Promise<CopyReport> {
   }
 
   // 書き込み(500件ずつ。同一IDへの set なので再実行しても重複しない)。
-  const writes: Array<{ ref: DocumentReference; snap: DocumentSnapshot }> = [];
+  const writes: Array<{
+    ref: DocumentReference;
+    snap: DocumentSnapshot;
+    collection: string | null;
+  }> = [];
   if (copyUserDoc)
     writes.push({
       ref: mapRef(dstDb, src.userSnap.ref.path, srcUid, dstUid),
       snap: src.userSnap,
+      collection: null,
     });
   for (const snap of src.snaps) {
-    writes.push({ ref: mapRef(dstDb, snap.ref.path, srcUid, dstUid), snap });
+    writes.push({
+      ref: mapRef(dstDb, snap.ref.path, srcUid, dstUid),
+      snap,
+      collection: snap.ref.path.split("/")[2],
+    });
   }
   for (let i = 0; i < writes.length; i += BATCH_SIZE) {
     const batch = dstDb.batch();
@@ -197,16 +227,25 @@ export async function copyUserData(opts: CopyOptions): Promise<CopyReport> {
     );
   }
 
-  // 検証: コレクションごとに旧・新の件数を比較。
-  const after = await scan(dstDb, dstUid, collections);
+  // 検証: 書いたドキュメントがコピー先に存在することを、指定コレクションごとに件数で確認する。
+  const dstCounts: Record<string, number> = {};
+  for (const name of collections) dstCounts[name] = 0;
+  for (let i = 0; i < writes.length; i += CHUNK) {
+    const chunk = writes.slice(i, i + CHUNK);
+    const snaps = await dstDb.getAll(...chunk.map((w) => w.ref));
+    snaps.forEach((snap, j) => {
+      const name = chunk[j].collection;
+      if (snap.exists && name !== null) dstCounts[name]++;
+    });
+  }
   report.executed = true;
-  report.dstCounts = after.counts;
+  report.dstCounts = dstCounts;
   let ok = true;
   for (const name of collections) {
-    const match = src.counts[name] === after.counts[name];
+    const match = src.counts[name] === dstCounts[name];
     if (!match) ok = false;
     log(
-      `[verify] ${name}: source ${src.counts[name]} / destination ${after.counts[name]} ${match ? "OK" : "MISMATCH"}`,
+      `[verify] ${name}: source ${src.counts[name]} / destination ${dstCounts[name]} ${match ? "OK" : "MISMATCH"}`,
     );
   }
   if (!ok)
