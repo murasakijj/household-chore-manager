@@ -1,8 +1,185 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 全データアクセスは Vercel Functions(firebase-admin)経由のみ(decisions.md)。
-    // クライアントからの直接読み書きはすべて拒否する。
+
+    // ======================================================================
+    // 4アプリ(household-chore-manager / money-lens / recipe-buddy / fridge-track)
+    // が共有する Firebase プロジェクトの統合ルール。正本はこのファイル。
+    // 他リポジトリから単独デプロイしない(ルールは1プロジェクトに1つで、
+    // デプロイすると他アプリのルールが消える)。docs/firebase-consolidation.md 参照。
+    //
+    // ルールは OR 評価。ワイルドカード許可(例: users/{userId}/{document=**})を
+    // 1つでも書くと、他アプリの制約(fridge-track の追記専用など)が破られる。
+    // アプリごとに自分のコレクションだけを明示すること。
+    // ======================================================================
+
+    // ---- 共通: 本人判定(fridge-track の厳格版に全アプリ統一) ----
+    // ログイン許可メール。デプロイスクリプト(npm run deploy:firestore)が
+    // 環境変数 RULES_ALLOWED_EMAILS でこの配列内のプレースホルダを置き換える。
+    function isAllowedEmail() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email in ['you@example.com'];
+    }
+
+    function isOwner(userId) {
+      return isAllowedEmail() && request.auth.uid == userId;
+    }
+
+    // ---- household-chore-manager ----
+    // userMemberships/*, households/** はクライアントから全拒否(API経由のみ)。
+    // 明示のマッチは書かず、末尾の全拒否に落とす。money-lens は Firestore 不使用。
+
+    // ---- fridge-track ----
+    // 食材カテゴリ ID(shared/categories.ts と同じ並び)。
+    function isValidCategory(c) {
+      return c == null || c in [
+        'vegetable', 'fruit', 'meat_fish', 'egg_dairy', 'soy_processed',
+        'staple', 'seasoning', 'drink', 'other'
+      ];
+    }
+
+    match /users/{userId} {
+
+      // ---- fridge-track: users/{uid}/{foodItems, inventoryLots, ...} ----
+
+      // 食材マスター: create / update 可。base_unit・created_at は変更不可。delete 不可。
+      // category は任意(既知の ID または null)。name・category は後から変更できる。
+      match /foodItems/{id} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['name', 'base_unit', 'category', 'created_at', 'updated_at'])
+          && request.resource.data.keys().hasAll(['name', 'base_unit', 'created_at', 'updated_at'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.base_unit is string
+          && request.resource.data.base_unit.size() > 0
+          && (!('category' in request.resource.data) || isValidCategory(request.resource.data.category))
+          && request.resource.data.created_at is timestamp
+          && request.resource.data.updated_at is timestamp;
+        allow update: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['name', 'base_unit', 'category', 'created_at', 'updated_at'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && (!('category' in request.resource.data) || isValidCategory(request.resource.data.category))
+          && request.resource.data.updated_at is timestamp
+          && request.resource.data.created_at == resource.data.created_at
+          && request.resource.data.base_unit == resource.data.base_unit;
+        allow delete: if false;
+      }
+
+      // Lot: create のみ。数量は持たない。
+      match /inventoryLots/{id} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['food_item_id', 'purchased_at', 'created_at', 'updated_at'])
+          && request.resource.data.keys().hasAll(['food_item_id', 'purchased_at', 'created_at', 'updated_at'])
+          && request.resource.data.food_item_id is string
+          && request.resource.data.purchased_at is timestamp
+          && request.resource.data.created_at is timestamp
+          && request.resource.data.updated_at is timestamp;
+        allow update, delete: if false;
+      }
+
+      // イベント: 追記専用(create のみ。update / delete 禁止)。符号は種別ごとに固定。
+      match /inventoryEvents/{id} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly([
+            'inventory_lot_id', 'food_item_id', 'event_type', 'quantity_delta',
+            'source_type', 'source_id', 'occurred_at', 'created_at', 'note'
+          ])
+          && request.resource.data.keys().hasAll([
+            'inventory_lot_id', 'food_item_id', 'event_type', 'quantity_delta',
+            'source_type', 'source_id', 'occurred_at', 'created_at'
+          ])
+          && request.resource.data.inventory_lot_id is string
+          && request.resource.data.food_item_id is string
+          && request.resource.data.event_type in ['PURCHASE', 'CONSUME', 'DISCARD', 'ADJUST']
+          && request.resource.data.source_type in ['MANUAL', 'RECIPE', 'RECEIPT', 'SYSTEM']
+          && (request.resource.data.source_id == null || request.resource.data.source_id is string)
+          && request.resource.data.quantity_delta is number
+          && (request.resource.data.event_type != 'PURCHASE' || request.resource.data.quantity_delta > 0)
+          && (!(request.resource.data.event_type in ['CONSUME', 'DISCARD']) || request.resource.data.quantity_delta < 0)
+          && (request.resource.data.event_type != 'ADJUST' || request.resource.data.quantity_delta != 0)
+          && request.resource.data.occurred_at is timestamp
+          && request.resource.data.created_at is timestamp
+          && (!('note' in request.resource.data) || request.resource.data.note is string);
+        allow update, delete: if false;
+      }
+
+      // レシート / 明細: create のみ。
+      match /receipts/{id} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['image_reference', 'purchased_at', 'created_at'])
+          && request.resource.data.keys().hasAll(['image_reference', 'purchased_at', 'created_at'])
+          && (request.resource.data.image_reference == null || request.resource.data.image_reference is string)
+          && request.resource.data.purchased_at is timestamp
+          && request.resource.data.created_at is timestamp;
+        allow update, delete: if false;
+      }
+
+      match /receiptItems/{id} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly([
+            'receipt_id', 'raw_name', 'food_item_id', 'quantity', 'unit',
+            'confirmed', 'ai_quantity', 'ai_unit'
+          ])
+          && request.resource.data.keys().hasAll([
+            'receipt_id', 'raw_name', 'food_item_id', 'quantity', 'unit',
+            'confirmed', 'ai_quantity', 'ai_unit'
+          ])
+          && request.resource.data.receipt_id is string
+          && request.resource.data.raw_name is string
+          && (request.resource.data.food_item_id == null || request.resource.data.food_item_id is string)
+          && request.resource.data.quantity is number
+          && request.resource.data.quantity >= 0
+          && request.resource.data.unit is string
+          && request.resource.data.confirmed is bool
+          && request.resource.data.ai_quantity is number
+          && request.resource.data.ai_unit is string;
+        allow update, delete: if false;
+      }
+
+      // レシート表記 → 食材の対応: upsert 可。
+      match /receiptFoodMappings/{id} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['raw_name', 'food_item_id', 'created_at', 'updated_at'])
+          && request.resource.data.raw_name is string
+          && request.resource.data.food_item_id is string
+          && request.resource.data.created_at is timestamp
+          && request.resource.data.updated_at is timestamp;
+        allow delete: if false;
+      }
+
+      // 消費プロファイル: イベントから再計算できる派生データ。
+      match /consumptionProfiles/{foodItemId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+
+      // レシピ連携の冪等性キー: サーバー(admin)のみ書込み。クライアントは読み取りのみ。
+      match /recipeConsumptions/{id} {
+        allow read: if isOwner(userId);
+        allow write: if false;
+      }
+
+      // ---- recipe-buddy: users/{uid}/{recipes, techniques} ----
+      // 本人のみ読み書き可。fridge-track のコレクションには一切許可しない。
+      match /recipes/{document=**} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /techniques/{document=**} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // 上記以外はすべて拒否
     match /{document=**} {
       allow read, write: if false;
     }

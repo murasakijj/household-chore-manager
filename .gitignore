@@ -14,3 +14,6 @@ firestore-debug.log
 firebase-debug.log
 ui-debug.log
 firestore-export/
+
+# 生成物(許可メールを埋め込んだルール等。コミットしない)
+.generated/
