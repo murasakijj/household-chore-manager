@@ -4,12 +4,12 @@
 
 ## 1. 対象と現状
 
-| アプリ                  | 認証   | Firestore                                                                                                                                                                             | サーバー側の Firebase 利用       | 移行作業                                                                |
-| ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------- |
-| household-chore-manager | Google | `userMemberships/*`, `households/**`（クライアント全拒否、API経由のみ）                                                                                                               | Auth 検証 + Firestore            | **なし（共有プロジェクトの持ち主）**                                    |
-| money-lens              | Google | 使わない（データは GitHub `money-lens-data`）                                                                                                                                         | Auth 検証のみ                    | 設定差し替えのみ                                                        |
-| recipe-buddy            | Google | `users/{uid}/recipes/*`, `users/{uid}/techniques/*`（クライアント直アクセス）                                                                                                         | Auth 検証のみ                    | データコピー + uid 付け替え + 設定差し替え                              |
-| fridge-track            | Google | `users/{uid}/{foodItems, inventoryLots, inventoryEvents, receipts, receiptItems, receiptFoodMappings, consumptionProfiles, recipeConsumptions}`（クライアント直アクセス、厳格ルール） | Auth 検証 + Firestore（連携API） | データコピー + uid 付け替え + 設定差し替え + `INVENTORY_OWNER_UID` 更新 |
+| アプリ | 認証 | Firestore | サーバー側の Firebase 利用 | 移行作業 |
+| --- | --- | --- | --- | --- |
+| household-chore-manager | Google | `userMemberships/*`, `households/**`（クライアント全拒否、API経由のみ） | Auth 検証 + Firestore | **なし（共有プロジェクトの持ち主）** |
+| money-lens | Google | 使わない（データは GitHub `money-lens-data`） | Auth 検証のみ | 設定差し替えのみ |
+| recipe-buddy | Google | `users/{uid}/recipes/*`, `users/{uid}/techniques/*`（クライアント直アクセス） | Auth 検証のみ | データコピー + uid 付け替え + 設定差し替え |
+| fridge-track | Google | `users/{uid}/{foodItems, inventoryLots, inventoryEvents, receipts, receiptItems, receiptFoodMappings, consumptionProfiles, recipeConsumptions}`（クライアント直アクセス、厳格ルール） | Auth 検証 + Firestore（連携API） | データコピー + uid 付け替え + 設定差し替え + `INVENTORY_OWNER_UID` 更新 |
 
 調査で確認した事実:
 
@@ -35,10 +35,10 @@
 
 - `firebase/firestore.rules`: アプリごとのセクションに分けた統合ルール。
   - household-chore-manager: 従来どおりクライアント全拒否（明示のマッチを書かない＝末尾の全拒否に落ちる）。
-  - recipe-buddy: `users/{userId}/recipes/{document=**}` と `users/{userId}/techniques/{document=**}` だけを本人に許可する。**従来の `users/{userId}/{document=**}` のワイルドカード許可は使わない\*\*（ルールは OR 評価のため、fridge-track の追記専用制約が破られる）。
+  - recipe-buddy: `users/{userId}/recipes/{document=**}` と `users/{userId}/techniques/{document=**}` だけを本人に許可する。**従来の `users/{userId}/{document=**}` のワイルドカード許可は使わない**（ルールは OR 評価のため、fridge-track の追記専用制約が破られる）。
   - fridge-track: 既存ルールをそのまま移植。
   - 本人判定は fridge-track の厳しい版（メール一致 + `email_verified` + `sign_in_provider == 'google.com'` + uid 一致）に全アプリで統一する。
-- 許可メールはリポジトリ上ではプレースホルダ `you@example.com` のまま置き、デプロイ用スクリプトが `--emails` 引数(または環境変数 `RULES_ALLOWED_EMAILS`)で置き換えた生成ファイル（git 管理外）をデプロイする。
+- 許可メールはリポジトリ上ではプレースホルダ `you@example.com` のまま置き、デプロイ用スクリプトが `--emails` 引数（または環境変数 `RULES_ALLOWED_EMAILS`）で置き換えた生成ファイル（git 管理外）をデプロイする。
 - `firebase/firestore.indexes.json`: household-chore-manager の既存インデックスに、他アプリが必要とする複合インデックスを統合する（旧プロジェクトのコンソールの「インデックス」タブで手動作成済みのものも移す）。
 - ルールのテスト: `@firebase/rules-unit-testing` で、アプリごとの許可・拒否（特に fridge-track の追記専用、recipe-buddy が fridge-track のコレクションを書けないこと、household-chore-manager のコレクションがクライアントから読めないこと、他人の uid 配下に触れないこと）をエミュレータで検証する。
 - recipe-buddy・fridge-track のリポジトリにある `firebase/firestore.rules` は削除し、「正本は household-chore-manager」と案内する README を置く（誤デプロイ防止）。
@@ -68,12 +68,12 @@ household-chore-manager の `scripts/migrate-firebase/` に置く。利用者が
 
 ### アプリごと（money-lens → recipe-buddy → fridge-track の順）
 
-| 手順               | money-lens                                                                                                                                                                          | recipe-buddy                           | fridge-track                                                                                                                                                                                                                             |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. データ移行      | 不要                                                                                                                                                                                | スクリプトを dry-run → `--execute`     | 同左                                                                                                                                                                                                                                     |
-| 2. Vercel 環境変数 | `VITE_FIREBASE_*` を共有プロジェクトの値に、`FIREBASE_PROJECT_ID` を設定し `FIREBASE_SERVICE_ACCOUNT` を削除（設定が残っていても `FIREBASE_PROJECT_ID` が優先され SA は無視される） | 同左                                   | `VITE_FIREBASE_*`、`FIREBASE_SERVICE_ACCOUNT` を共有プロジェクトのものに、`INVENTORY_OWNER_UID` を新 uid に（新 uid は共有プロジェクトのコンソール → Authentication → ユーザー の「User UID」で確認。移行スクリプトは uid を表示しない） |
-| 3. 再デプロイ      | Vercel で Redeploy（`VITE_*` はビルド時に埋め込まれるため必須）                                                                                                                     | 同左                                   | 同左                                                                                                                                                                                                                                     |
-| 4. 動作確認        | ログイン・データ表示・AI分析                                                                                                                                                        | ログイン・レシピ一覧・編集・AIアレンジ | ログイン・在庫一覧・レシート読み取り・recipe-buddy からの消費連携                                                                                                                                                                        |
+| 手順 | money-lens | recipe-buddy | fridge-track |
+| --- | --- | --- | --- |
+| 1. データ移行 | 不要 | スクリプトを dry-run → `--execute` | 同左 |
+| 2. Vercel 環境変数 | `VITE_FIREBASE_*` を共有プロジェクトの値に、`FIREBASE_PROJECT_ID` を設定し `FIREBASE_SERVICE_ACCOUNT` を削除（設定が残っていても `FIREBASE_PROJECT_ID` が優先され SA は無視される） | 同左 | `VITE_FIREBASE_*`、`FIREBASE_SERVICE_ACCOUNT` を共有プロジェクトのものに、`INVENTORY_OWNER_UID` を新 uid に（新 uid は共有プロジェクトのコンソール → Authentication → ユーザー の「User UID」で確認。移行スクリプトは uid を表示しない） |
+| 3. 再デプロイ | Vercel で Redeploy（`VITE_*` はビルド時に埋め込まれるため必須） | 同左 | 同左 |
+| 4. 動作確認 | ログイン・データ表示・AI分析 | ログイン・レシピ一覧・編集・AIアレンジ | ログイン・在庫一覧・レシート読み取り・recipe-buddy からの消費連携 |
 
 ### 戻し方
 
@@ -85,11 +85,11 @@ Vercel の環境変数を旧プロジェクトの値に戻して再デプロイ�
 
 ## 4. 各リポジトリの変更
 
-| リポジトリ              | 変更                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| リポジトリ | 変更 |
+| --- | --- |
 | household-chore-manager | 本書、統合ルール・インデックス、ルールのデプロイスクリプトとテスト、移行スクリプトとテスト、`docs/setup.md`・`docs/architecture.md`・`docs/decisions.md` 更新 |
-| money-lens              | `FIREBASE_PROJECT_ID` のみでの初期化に対応（テスト付き）、`.env.example`・セットアップ文書更新                                                                |
-| recipe-buddy            | 同上、`firebase/firestore.rules` を削除し正本への案内に置き換え                                                                                               |
-| fridge-track            | `firebase/firestore.rules` を削除し正本への案内に置き換え、セットアップ文書更新（共有プロジェクト・`INVENTORY_OWNER_UID`）                                    |
+| money-lens | `FIREBASE_PROJECT_ID` のみでの初期化に対応（テスト付き）、`.env.example`・セットアップ文書更新 |
+| recipe-buddy | 同上、`firebase/firestore.rules` を削除し正本への案内に置き換え |
+| fridge-track | `firebase/firestore.rules` を削除し正本への案内に置き換え、セットアップ文書更新（共有プロジェクト・`INVENTORY_OWNER_UID`） |
 
 いずれもアプリの機能・データ構造は変えない。

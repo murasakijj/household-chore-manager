@@ -4,23 +4,23 @@
 
 ## §21 実装開始時の選択
 
-| 項目           | 決定                                                                                                                                                           | 理由                                                                                                                                                                 |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| フロントエンド | React 19 + Vite + TypeScript / react-router-dom v7 / 素のCSS（モバイルファースト）                                                                             | recipe-buddy と同構成。実績があり保守しやすい                                                                                                                        |
-| バックエンド   | Vercel Functions（Node.js 22, `api/`）。**全データアクセスはAPI経由**                                                                                          | 設計書 §11.4「状態はサーバー側で算出」「household_id をクライアントから信用しない」を素直に満たすため。クライアントからの Firestore 直アクセスは使わない             |
-| DB             | Cloud Firestore（firebase-admin からのみアクセス）。セキュリティルールはクライアント全拒否                                                                     | 無料枠、recipe-buddy と同じ Firebase プロジェクト運用。マイグレーションの代わりにドキュメントへ `schemaVersion` を持たせる                                           |
-| 認証           | Firebase Authentication（Google）。サーバーは `requireAuth`（IDトークン検証 + `ALLOWED_EMAILS`）を全APIで通す                                                  | recipe-buddy の実装をほぼ移植。`ALLOWED_EMAILS=u9c3300232346g@gmail.com` とし、本人以外は403                                                                         |
-| ホスティング   | Vercel（Hobby）。関数リージョンは Firestore と同じ東京（hnd1）に固定（2026-10-16、遅延の実測対応）                                                             | ユーザー指定。既定の iad1 では Firestore（東京）との往復で画面遷移が遅かった                                                                                         |
-| Push通知方式   | Web Push（VAPID, `web-push`）+ PWA（manifest + service worker）。送信ジョブは `POST /api/cron/daily-summary`（`CRON_SECRET` 認証）を GitHub Actions で毎時起動 | Vercel Hobby の Cron は1日1回のみで利用者ごとの通知時刻に対応できないため。Vercel Cron（毎日 23:00 UTC = 08:00 JST）も保険として併用し、送信済み判定で二重送信しない |
-| 利用者         | 本人のみで開始。データ構造は household / member を持ち、将来メンバー追加可能                                                                                   | ユーザー指定                                                                                                                                                         |
+| 項目 | 決定 | 理由 |
+| --- | --- | --- |
+| フロントエンド | React 19 + Vite + TypeScript / react-router-dom v7 / 素のCSS（モバイルファースト） | recipe-buddy と同構成。実績があり保守しやすい |
+| バックエンド | Vercel Functions（Node.js 22, `api/`）。**全データアクセスはAPI経由** | 設計書 §11.4「状態はサーバー側で算出」「household_id をクライアントから信用しない」を素直に満たすため。クライアントからの Firestore 直アクセスは使わない |
+| DB | Cloud Firestore（firebase-admin からのみアクセス）。セキュリティルールはクライアント全拒否 | 無料枠、recipe-buddy と同じ Firebase プロジェクト運用。マイグレーションの代わりにドキュメントへ `schemaVersion` を持たせる |
+| 認証 | Firebase Authentication（Google）。サーバーは `requireAuth`（IDトークン検証 + `ALLOWED_EMAILS`）を全APIで通す | recipe-buddy の実装をほぼ移植。`ALLOWED_EMAILS=u9c3300232346g@gmail.com` とし、本人以外は403 |
+| ホスティング | Vercel（Hobby）。関数リージョンは Firestore と同じ東京（hnd1）に固定（2026-10-16、遅延の実測対応） | ユーザー指定。既定の iad1 では Firestore（東京）との往復で画面遷移が遅かった |
+| Push通知方式 | Web Push（VAPID, `web-push`）+ PWA（manifest + service worker）。送信ジョブは `POST /api/cron/daily-summary`（`CRON_SECRET` 認証）を GitHub Actions で毎時起動 | Vercel Hobby の Cron は1日1回のみで利用者ごとの通知時刻に対応できないため。Vercel Cron（毎日 23:00 UTC = 08:00 JST）も保険として併用し、送信済み判定で二重送信しない |
+| 利用者 | 本人のみで開始。データ構造は household / member を持ち、将来メンバー追加可能 | ユーザー指定 |
 
 ## 生成AI（2026-09-28 ユーザー決定）
 
 設計書 §4.2 は「AIによる家事提案」をMVP対象外としているが、ユーザー決定により次の2機能に限ってAIを使う。いずれも **AIの結果は候補表示のみで、利用者の確認なしに保存しない**。
 
-| 機能                   | 内容                                                                                                                                                                            |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 家事登録アシスト       | S-04 で家事名を入力し「AIで候補を出す」を押すと、場所・カテゴリ・推奨間隔（と説明）の候補をフォームに反映する。保存は利用者が行う                                               |
+| 機能 | 内容 |
+| --- | --- |
+| 家事登録アシスト | S-04 で家事名を入力し「AIで候補を出す」を押すと、場所・カテゴリ・推奨間隔（と説明）の候補をフォームに反映する。保存は利用者が行う |
 | 初期家事リスト一括提案 | 家庭の状況（例: 犬がいる、乳児がいる）を入力すると家事項目リスト案を出す。チェックしたものだけ一括登録。AIが使えない場合に備え、設計書 §18 の推奨初期データも同じ画面から選べる |
 
 - AI呼び出しはプロバイダ抽象化（`api/_lib/ai/`）し、環境変数 `AI_PROVIDER` で `gemini`（既定）/ `openai`（OpenAI互換API。OpenAI・OpenRouter・ローカルLLM等）/ `anthropic` を切り替える。モデルは `AI_MODEL`。
@@ -64,13 +64,13 @@ elapsed <= interval + grace   → recommended
 
 変更前後の対応（間隔7・予告2・猶予3）:
 
-| 経過日数 | 変更前（内部値 / 表示名）          | 変更後（内部値 / 区分名 / バッジ）     |
-| -------: | ---------------------------------- | -------------------------------------- |
-|     0〜4 | `not_due` / まだ不要               | 同左                                   |
-|     5〜6 | `upcoming` / そろそろ              | 同左                                   |
-|        7 | `upcoming` / そろそろ              | `due_today` / 今日やる日 / 今日やる日  |
-|    8〜10 | `recommended` / 今日やった方がよい | `recommended` / 超過 / 「1〜3日超過」  |
-|     11〜 | `overdue` / 優先                   | `overdue` / 優先 / 「優先・4日超過」〜 |
+| 経過日数 | 変更前（内部値 / 表示名） | 変更後（内部値 / 区分名 / バッジ） |
+| ---: | --- | --- |
+| 0〜4 | `not_due` / まだ不要 | 同左 |
+| 5〜6 | `upcoming` / そろそろ | 同左 |
+| 7 | `upcoming` / そろそろ | `due_today` / 今日やる日 / 今日やる日 |
+| 8〜10 | `recommended` / 今日やった方がよい | `recommended` / 超過 / 「1〜3日超過」 |
+| 11〜 | `overdue` / 優先 | `overdue` / 優先 / 「優先・4日超過」〜 |
 
 - 内部値 `recommended` / `overdue` は名前を変えない（DB・API互換のため）。`due_today` を追加。
 - 区分名（セクション見出し・フィルタ）とバッジ文言は `src/lib/statusMeta.ts` が唯一の定義場所。バッジ文言は `statusBadgeLabel(status, overdueDays)`。`overdueDays`（= 経過日数 − 推奨間隔）はサーバーが全レスポンスで返す。判定式はクライアントに書かない。
@@ -85,7 +85,7 @@ elapsed <= interval + grace   → recommended
 
 - Authentication・Firestore（既定DB1つ）を共有。コレクション名は4アプリ間で衝突しないため名前空間は変えない。
 - ルール・インデックスの正本はこのリポジトリの `firebase/` に一本化（ルールは1プロジェクトに1つのため）。recipe-buddy のワイルドカード許可は使わず、アプリごとにコレクションを明示する。本人判定は fridge-track の厳格版に統一。
-- 許可メールはプレースホルダのままコミットし、`npm run deploy:firestore` が `--emails`(または `RULES_ALLOWED_EMAILS`)で置換した生成ファイル（git 管理外）をデプロイする。
+- 許可メールはプレースホルダのままコミットし、`npm run deploy:firestore` が `RULES_ALLOWED_EMAILS` で置換した生成ファイル（git 管理外）をデプロイする。
 - recipe-buddy・fridge-track のデータは `scripts/migrate-firebase/` で旧プロジェクトからコピー（uid 付け替え）。
 - このアプリの機能・データ構造・Firestore へのアクセス方法（API経由のみ）は変えない。
 
