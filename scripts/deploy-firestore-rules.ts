@@ -1,8 +1,10 @@
 /**
  * 統合 Firestore ルール・インデックスのデプロイ。
  *
- *   RULES_ALLOWED_EMAILS=a@gmail.com,b@gmail.com \
- *     npm run deploy:firestore -- --project <PROJECT_ID>
+ *   npm run deploy:firestore -- --project <PROJECT_ID> --emails a@gmail.com,b@gmail.com
+ *
+ * 許可メールは `--emails`(カンマ区切り)か環境変数 `RULES_ALLOWED_EMAILS` で指定する
+ * (両方あれば `--emails` を優先。Windows でも動くよう引数での指定を基本とする)。
  *
  * `--project <ID>` は必須(環境変数からの暗黙の補完はしない。誤デプロイ防止)。
  * デプロイ前に対象プロジェクトIDと許可メール件数を表示し、プロジェクトIDの再入力で
@@ -15,28 +17,21 @@ import { createInterface } from "node:readline/promises";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseDeployArgs, pickEmailsRaw } from "./lib/deploy-args.js";
 import { parseAllowedEmails, renderRules } from "./lib/rules.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function parseArgs(argv: string[]) {
-  let project: string | undefined;
-  let generateOnly = false;
-  let yes = false;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--project") project = argv[++i];
-    else if (a.startsWith("--project=")) project = a.slice("--project=".length);
-    else if (a === "--generate-only") generateOnly = true;
-    else if (a === "--yes") yes = true;
-    else throw new Error(`Unknown argument: ${a}`);
-  }
-  return { project, generateOnly, yes };
-}
-
 async function main() {
-  const { project, generateOnly, yes } = parseArgs(process.argv.slice(2));
-  const emails = parseAllowedEmails(process.env.RULES_ALLOWED_EMAILS);
+  const {
+    project,
+    emails: emailsArg,
+    generateOnly,
+    yes,
+  } = parseDeployArgs(process.argv.slice(2));
+  const emails = parseAllowedEmails(
+    pickEmailsRaw(emailsArg, process.env.RULES_ALLOWED_EMAILS),
+  );
   if (!generateOnly && (!project || !/^[a-z0-9-]+$/.test(project))) {
     throw new Error(
       "--project <ID> is required (no implicit fallback to environment variables).",

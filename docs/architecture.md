@@ -40,13 +40,13 @@ GitHub Actions（毎時）/ Vercel Cron（毎日）→ /api/cron/daily-summary
 
 ## ドメイン（純粋関数・`api/_lib/domain/`）
 
-| ファイル | 内容 |
-| --- | --- |
-| `calendar.ts` | `localDate(instant, tz) → "YYYY-MM-DD"`、`diffCalendarDays(a, b)`（`Intl.DateTimeFormat` で暦日化し `Date.UTC` で差分。外部ライブラリ不要） |
-| `status.ts` | `computeChoreStatus({isActive, lastCompletedAt, intervalDays, warningDays, graceDays, now, timezone}) → {status, elapsedDays, overdueDays, nextChangeDate}`（設計書 §7.4 を厳守）。`defaultWarningGrace(intervalDays)`（§7.6）、`validateIntervals`（§7.4 制約） |
-| `ordering.ts` | 状態順・超過日数・名称の比較関数（§12.3）。ホーム・一覧・通知で共通使用 |
-| `today.ts` | ホームのセクション分け（優先/超過/今日やる日/そろそろ/初回未実施/本日実施済み、not_due は件数のみ） |
-| `summary.ts` | 朝のまとめ通知の対象抽出と文面生成（§12.1〜12.3、§7.7 の「初回記録待ち」） |
+| ファイル      | 内容                                                                                                                                                                                                                                                             |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `calendar.ts` | `localDate(instant, tz) → "YYYY-MM-DD"`、`diffCalendarDays(a, b)`（`Intl.DateTimeFormat` で暦日化し `Date.UTC` で差分。外部ライブラリ不要）                                                                                                                      |
+| `status.ts`   | `computeChoreStatus({isActive, lastCompletedAt, intervalDays, warningDays, graceDays, now, timezone}) → {status, elapsedDays, overdueDays, nextChangeDate}`（設計書 §7.4 を厳守）。`defaultWarningGrace(intervalDays)`（§7.6）、`validateIntervals`（§7.4 制約） |
+| `ordering.ts` | 状態順・超過日数・名称の比較関数（§12.3）。ホーム・一覧・通知で共通使用                                                                                                                                                                                          |
+| `today.ts`    | ホームのセクション分け（優先/超過/今日やる日/そろそろ/初回未実施/本日実施済み、not_due は件数のみ）                                                                                                                                                              |
+| `summary.ts`  | 朝のまとめ通知の対象抽出と文面生成（§12.1〜12.3、§7.7 の「初回記録待ち」）                                                                                                                                                                                       |
 
 状態値・表示名・色は **サーバーは内部値のみ返す**。表示名（区分名）・状態バッジ文言（`statusBadgeLabel(status, overdueDays)`、recommended「○日超過」/ overdue「優先・○日超過」）・色・アイコンの定義は `src/lib/statusMeta.ts` 1箇所に置く（設計書 §7.1, §14.4）。`overdueDays` は全レスポンスの家事DTOに含まれる。
 
@@ -74,7 +74,7 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 ```
 
 - `firebase/` は **4アプリ（household-chore-manager・money-lens・recipe-buddy・fridge-track）が共有する Firebase プロジェクトのルール・インデックスの正本**（[firebase-consolidation.md](./firebase-consolidation.md)）。他リポジトリから単独デプロイしない。デプロイは `npm run deploy:firestore`（[setup.md](./setup.md)）。
-- `firebase/firestore.rules`: アプリ別セクションの統合ルール。household-chore-manager のコレクション（`userMemberships/*`, `households/**`）は明示のマッチを置かず末尾の全拒否に落とす（クライアントは全拒否）。recipe-buddy は `users/{uid}/recipes|techniques` のみ、fridge-track は `users/{uid}/…` の8コレクションを個別制約つきで許可。本人判定は全アプリ共通（許可メール + `email_verified` + Google プロバイダ + uid 一致）。許可メールはリポジトリ上ではプレースホルダで、デプロイ時に `RULES_ALLOWED_EMAILS` で置換する。テストは `firebase/firestore.rules.emulator.test.ts`（`npm run test:emulator`）。
+- `firebase/firestore.rules`: アプリ別セクションの統合ルール。household-chore-manager のコレクション（`userMemberships/*`, `households/**`）は明示のマッチを置かず末尾の全拒否に落とす（クライアントは全拒否）。recipe-buddy は `users/{uid}/recipes|techniques` のみ、fridge-track は `users/{uid}/…` の8コレクションを個別制約つきで許可。本人判定は全アプリ共通（許可メール + `email_verified` + Google プロバイダ + uid 一致）。許可メールはリポジトリ上ではプレースホルダで、デプロイ時に `--emails`(または `RULES_ALLOWED_EMAILS`)で置換する。テストは `firebase/firestore.rules.emulator.test.ts`（`npm run test:emulator`）。
 - `firebase/firestore.indexes.json`: `choreEvents` に以下の複合インデックス。
   - `(choreId ASC, voidedAt ASC, occurredAt DESC)`: 家事別履歴（有効履歴のみ）、`lastCompletedAt` 再計算、possibleDuplicate 判定、`areaId` 絞り込みの `choreId in [...]`
   - `(choreId ASC, occurredAt DESC)`: 家事別履歴（`includeVoided=true`）
@@ -92,27 +92,27 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 
 設計書 §11 に従う。すべて `requireAuth` → `resolveContext` を通る（cron を除く）。
 
-| Method | Path | 備考 |
-| --- | --- | --- |
-| GET | `/api/auth-check` | 200 `{ok:true, member, household}` |
-| GET | `/api/chores` | `status, areaId, categoryId, q, includeInactive, sort=status\|elapsed\|name`。各家事に `status, elapsedDays, overdueDays, lastCompletedAt, nextChangeDate` を付与 |
-| POST | `/api/chores` | 同名があれば `warnings:["duplicate_name"]` を返す（保存はする）。任意 `lastCompletedAt` 指定時は completed イベントを1件作る |
-| POST | `/api/chores/bulk` | 一括提案からの登録（最大50件） |
-| GET | `/api/chores/today` | `{sections:{overdue, recommended, dueToday, upcoming, neverDone, doneToday}, notDueCount}` |
-| GET/PATCH | `/api/chores/{id}` | 詳細は最近の履歴20件・平均実施間隔（有効履歴2件以上）を含む。PATCH で `isActive:false` = 無効化 |
-| POST | `/api/chores/{id}/events` | `{clientRequestId, occurredAt?, actorMemberId?, note?}`。未来日時は400。冪等・`possibleDuplicate` |
-| GET | `/api/chores/{id}/events` | カーソルページネーション、`includeVoided` |
-| GET | `/api/chore-events` | 全体履歴。`choreId, areaId, actorMemberId, from, to, includeVoided, cursor, limit` |
-| POST | `/api/chore-events/{id}/void` | `{reason?}`。二重取消は409 |
-| GET/POST/PATCH | `/api/areas`, `/api/resources`, `/api/chore-categories` | PATCH は `/api/areas/{id}` 形式 |
-| GET/PATCH | `/api/settings` | 家庭（名前・timezone）＋自分の通知設定 |
-| GET | `/api/members` | 実施者選択用 |
-| POST/DELETE | `/api/push/subscriptions` | Web Push 購読の登録/解除 |
-| POST | `/api/push/test` | 自分宛てテスト通知 |
-| POST | `/api/ai/chore-suggestion` | `{name}` → `{areaId\|null, categoryId\|null, intervalDays, warningDays, graceDays, description\|null}` |
-| POST | `/api/ai/chore-list-proposal` | `{context}` → `{items:[{name, areaId, categoryId, intervalDays, warningDays, graceDays, description}]}`（最大30件） |
-| GET | `/api/templates/initial-chores` | 設計書 §18 の家事項目例（AI不要のフォールバック） |
-| GET/POST | `/api/cron/daily-summary` | `Authorization: Bearer $CRON_SECRET`。requireAuth は通さない |
+| Method         | Path                                                    | 備考                                                                                                                                                              |
+| -------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET            | `/api/auth-check`                                       | 200 `{ok:true, member, household}`                                                                                                                                |
+| GET            | `/api/chores`                                           | `status, areaId, categoryId, q, includeInactive, sort=status\|elapsed\|name`。各家事に `status, elapsedDays, overdueDays, lastCompletedAt, nextChangeDate` を付与 |
+| POST           | `/api/chores`                                           | 同名があれば `warnings:["duplicate_name"]` を返す（保存はする）。任意 `lastCompletedAt` 指定時は completed イベントを1件作る                                      |
+| POST           | `/api/chores/bulk`                                      | 一括提案からの登録（最大50件）                                                                                                                                    |
+| GET            | `/api/chores/today`                                     | `{sections:{overdue, recommended, dueToday, upcoming, neverDone, doneToday}, notDueCount}`                                                                        |
+| GET/PATCH      | `/api/chores/{id}`                                      | 詳細は最近の履歴20件・平均実施間隔（有効履歴2件以上）を含む。PATCH で `isActive:false` = 無効化                                                                   |
+| POST           | `/api/chores/{id}/events`                               | `{clientRequestId, occurredAt?, actorMemberId?, note?}`。未来日時は400。冪等・`possibleDuplicate`                                                                 |
+| GET            | `/api/chores/{id}/events`                               | カーソルページネーション、`includeVoided`                                                                                                                         |
+| GET            | `/api/chore-events`                                     | 全体履歴。`choreId, areaId, actorMemberId, from, to, includeVoided, cursor, limit`                                                                                |
+| POST           | `/api/chore-events/{id}/void`                           | `{reason?}`。二重取消は409                                                                                                                                        |
+| GET/POST/PATCH | `/api/areas`, `/api/resources`, `/api/chore-categories` | PATCH は `/api/areas/{id}` 形式                                                                                                                                   |
+| GET/PATCH      | `/api/settings`                                         | 家庭（名前・timezone）＋自分の通知設定                                                                                                                            |
+| GET            | `/api/members`                                          | 実施者選択用                                                                                                                                                      |
+| POST/DELETE    | `/api/push/subscriptions`                               | Web Push 購読の登録/解除                                                                                                                                          |
+| POST           | `/api/push/test`                                        | 自分宛てテスト通知                                                                                                                                                |
+| POST           | `/api/ai/chore-suggestion`                              | `{name}` → `{areaId\|null, categoryId\|null, intervalDays, warningDays, graceDays, description\|null}`                                                            |
+| POST           | `/api/ai/chore-list-proposal`                           | `{context}` → `{items:[{name, areaId, categoryId, intervalDays, warningDays, graceDays, description}]}`（最大30件）                                               |
+| GET            | `/api/templates/initial-chores`                         | 設計書 §18 の家事項目例（AI不要のフォールバック）                                                                                                                 |
+| GET/POST       | `/api/cron/daily-summary`                               | `Authorization: Bearer $CRON_SECRET`。requireAuth は通さない                                                                                                      |
 
 ### 朝のまとめ通知ジョブ
 
@@ -122,18 +122,18 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 
 ## フロントエンド
 
-| パス | 画面 |
-| --- | --- |
-| `/login` | ログイン（アクセス権なし表示含む） |
-| `/` | S-01 今日の家事 |
-| `/chores` | S-02 家事一覧 |
-| `/chores/new`, `/chores/:id/edit` | S-04 登録・編集（AI候補ボタン） |
-| `/chores/propose` | 初期家事リスト一括提案（AI / 推奨初期データ） |
-| `/chores/:id` | S-03 家事詳細 |
-| `/chores/:id/record` | S-05 実施記録 |
-| `/history` | S-06 全体履歴 |
-| `/settings` | S-07 設定（通知・タイムゾーン・1タップ設定・場所/カテゴリ/対象リソース管理への導線） |
-| `/settings/areas`, `/settings/categories`, `/settings/resources` | マスタ管理 |
+| パス                                                             | 画面                                                                                 |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `/login`                                                         | ログイン（アクセス権なし表示含む）                                                   |
+| `/`                                                              | S-01 今日の家事                                                                      |
+| `/chores`                                                        | S-02 家事一覧                                                                        |
+| `/chores/new`, `/chores/:id/edit`                                | S-04 登録・編集（AI候補ボタン）                                                      |
+| `/chores/propose`                                                | 初期家事リスト一括提案（AI / 推奨初期データ）                                        |
+| `/chores/:id`                                                    | S-03 家事詳細                                                                        |
+| `/chores/:id/record`                                             | S-05 実施記録                                                                        |
+| `/history`                                                       | S-06 全体履歴                                                                        |
+| `/settings`                                                      | S-07 設定（通知・タイムゾーン・1タップ設定・場所/カテゴリ/対象リソース管理への導線） |
+| `/settings/areas`, `/settings/categories`, `/settings/resources` | マスタ管理                                                                           |
 
 - 下部ナビ「今日」「家事」「履歴」「設定」。タップ領域44px以上、状態は色＋ラベル＋アイコン。
 - 「やった」: `oneTapComplete` ON なら即記録しトーストに「取り消す」（Undo = void API）。OFF なら S-05 へ。
@@ -144,15 +144,15 @@ households/{hid}/pushSubscriptions/{sha256(endpoint)} { memberId, endpoint, keys
 
 サーバー（Vercel、秘密。`VITE_` を付けない）:
 
-| 変数 | 用途 |
-| --- | --- |
-| `FIREBASE_SERVICE_ACCOUNT` | firebase-admin 初期化（JSON 1行） |
-| `ALLOWED_EMAILS` | 許可メール（カンマ区切り、小文字比較）。本番は `u9c3300232346g@gmail.com` |
-| `AI_PROVIDER` | `gemini`（既定）/ `openai` / `anthropic` |
-| `AI_MODEL` | 任意。既定はプロバイダごと（gemini: `gemini-3.6-flash`） |
-| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `ANTHROPIC_API_KEY` | 選んだプロバイダのもの |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push |
-| `CRON_SECRET` | 通知ジョブ認証 |
+| 変数                                                                          | 用途                                                                      |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `FIREBASE_SERVICE_ACCOUNT`                                                    | firebase-admin 初期化（JSON 1行）                                         |
+| `ALLOWED_EMAILS`                                                              | 許可メール（カンマ区切り、小文字比較）。本番は `u9c3300232346g@gmail.com` |
+| `AI_PROVIDER`                                                                 | `gemini`（既定）/ `openai` / `anthropic`                                  |
+| `AI_MODEL`                                                                    | 任意。既定はプロバイダごと（gemini: `gemini-3.6-flash`）                  |
+| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `ANTHROPIC_API_KEY` | 選んだプロバイダのもの                                                    |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`                    | Web Push                                                                  |
+| `CRON_SECRET`                                                                 | 通知ジョブ認証                                                            |
 
 フロント（公開値）: `VITE_FIREBASE_*`（6個）、`VITE_VAPID_PUBLIC_KEY`。
 

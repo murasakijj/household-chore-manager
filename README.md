@@ -53,16 +53,16 @@ npm run dev
 
 ## コマンド
 
-| コマンド | 内容 |
-| --- | --- |
-| `npm run dev` | フロント開発サーバー(Vite) |
-| `npm run build` | 型チェック + 本番ビルド |
-| `npm run lint` | ESLint |
-| `npm run format` | Prettier |
-| `npm test` | ユニット・結合テスト(`MemoryRepo`、Firestore不要) |
-| `npm run test:emulator` | Firestoreエミュレータに実接続するテスト(結合・統合ルール・移行。`firebase-tools` が必要) |
-| `npm run deploy:firestore` | 統合 Firestore ルール・インデックスのデプロイ(`RULES_ALLOWED_EMAILS` 必須) |
-| `npm run migrate:firebase` | 他アプリ(recipe-buddy / fridge-track)のデータ移行(既定 dry-run) |
+| コマンド                   | 内容                                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run dev`              | フロント開発サーバー(Vite)                                                                                                     |
+| `npm run build`            | 型チェック + 本番ビルド                                                                                                        |
+| `npm run lint`             | ESLint                                                                                                                         |
+| `npm run format`           | Prettier                                                                                                                       |
+| `npm test`                 | ユニット・結合テスト(`MemoryRepo`、Firestore不要)                                                                              |
+| `npm run test:emulator`    | Firestoreエミュレータに実接続するテスト(結合・統合ルール・移行。`firebase-tools` が必要)                                       |
+| `npm run deploy:firestore` | 統合 Firestore ルール・インデックスのデプロイ(`--project <ID> --emails a@x.com` 必須。手順は [docs/setup.md](./docs/setup.md)) |
+| `npm run migrate:firebase` | 他アプリ(recipe-buddy / fridge-track)のデータ移行(既定 dry-run)                                                                |
 
 ## ドキュメント
 

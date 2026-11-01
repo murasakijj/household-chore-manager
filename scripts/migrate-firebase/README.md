@@ -12,19 +12,30 @@
   未ログインだと新 uid を解決できず中断する)
 - 移行中は対象アプリを使わない(コピー後に旧側へ書いたデータは移らない)
 
-JSON はリポジトリの外(例 `~/keys/old-sa.json`)に置く(誤コミット防止に `*service-account*.json` / `*-sa.json` は `.gitignore` 済み)。作業後は削除すること。
+実行前提: PR #3 をマージした後の main、またはこのブランチで実行する(未マージの main では
+`Missing script: migrate:firebase`)。初回は `npm install`(`tsx` が devDependency)。
+
+JSON はリポジトリの外(Windows 例 `C:\keys\old-sa.json`、macOS/Linux 例 `~/keys/old-sa.json`。
+先頭の `~` はホームディレクトリに展開される)に置く(誤コミット防止に `*service-account*.json` / `*-sa.json` は `.gitignore` 済み)。作業後は削除すること。
 
 ## 使い方
 
-```bash
-# 1. dry-run(既定。件数と無料枠の見積もりだけ表示、書き込まない)
-npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com \
-  --old-service-account ~/keys/old-sa.json --new-service-account ~/keys/new-sa.json
+どのシェル(bash / PowerShell / cmd)でもそのまま動く1行形式。
 
-# 2. 実書き込み
-npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com \
-  --old-service-account ~/keys/old-sa.json --new-service-account ~/keys/new-sa.json --execute
+1. dry-run(既定。件数と無料枠の見積もりだけ表示、書き込まない)
+
 ```
+npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json
+```
+
+2. 実書き込み(同じコマンドに `--execute` を付ける)
+
+```
+npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json --execute
+```
+
+macOS/Linux ではパスを `~/keys/old-sa.json` のように書いてもよい。`npm run ... -- --flag` の `--` は
+PowerShell 7 / 5.1 でも通常そのまま渡る。渡らない場合は `npx tsx scripts/migrate-firebase/cli.ts --app ...` と直接実行する。
 
 | オプション                                        | 内容                                                                                                                                                                                                          |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

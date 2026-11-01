@@ -14,18 +14,17 @@ export function parseAllowedEmails(raw: string | undefined): string[] {
     .filter((s) => s.length > 0);
   if (emails.length === 0) {
     throw new Error(
-      "RULES_ALLOWED_EMAILS is not set (comma-separated emails).",
+      "Allowed emails are not set. Pass --emails a@x.com,b@y.com " +
+        "or set the RULES_ALLOWED_EMAILS environment variable (comma-separated).",
     );
   }
   for (const e of emails) {
     if (!EMAIL_RE.test(e)) {
-      throw new Error(
-        `Invalid email in RULES_ALLOWED_EMAILS: ${JSON.stringify(e)}`,
-      );
+      throw new Error(`Invalid allowed email: ${JSON.stringify(e)}`);
     }
     if (e.toLowerCase() === PLACEHOLDER_EMAIL) {
       throw new Error(
-        `RULES_ALLOWED_EMAILS still contains the placeholder ${PLACEHOLDER_EMAIL}.`,
+        `Allowed emails still contain the placeholder ${PLACEHOLDER_EMAIL}.`,
       );
     }
   }

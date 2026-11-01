@@ -1,10 +1,10 @@
 /**
  * 使い方は README.md。例:
- *   npm run migrate:firebase -- --app recipe-buddy --email me@example.com \
- *     --old-service-account ~/keys/old-sa.json --new-service-account ~/keys/new-sa.json \
- *     [--collections a,b] [--execute] [--overwrite]
+ *   npm run migrate:firebase -- --app recipe-buddy --email me@example.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json [--collections a,b] [--execute] [--overwrite]
+ * パス先頭の `~` はホームディレクトリに展開する。
  */
 import { readFileSync } from "node:fs";
+import { expandHome } from "../lib/paths.js";
 import { cert, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
@@ -43,7 +43,7 @@ function loadServiceAccount(path: string) {
   // 失敗時は内容の断片を出さないよう、固定メッセージのみ表示する。
   let json: { project_id?: unknown };
   try {
-    json = JSON.parse(readFileSync(path, "utf8"));
+    json = JSON.parse(readFileSync(expandHome(path), "utf8"));
   } catch {
     throw new Error(
       "Could not read or parse a service account JSON file (check the path and that it is the downloaded key file).",
