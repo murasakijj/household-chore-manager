@@ -102,6 +102,11 @@ npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-servi
 Authentication → ユーザー の「User UID」が新 uid。fridge-track の Vercel 環境変数
 `INVENTORY_OWNER_UID` にこの値を設定する(スクリプトは uid を表示しない)。
 
+サービスアカウントJSONの読み込みに失敗したときは、旧・新それぞれのパスと理由が表示される。
+PowerShell では `Get-ChildItem C:\keys`(拡張子が隠れて `.json.json` になっていないか)、
+`Test-Path <パス>`、`(Get-Content <パス> -Raw | ConvertFrom-Json).project_id` で確認できる。
+メモ帳や `Out-File` で保存し直すと文字コードが UTF-16 に変わるため、キーは編集せずダウンロードし直す。
+
 詳細・オプション・注意点は
 [scripts/migrate-firebase/README.md](../scripts/migrate-firebase/README.md)。
 アプリごとの切り替え手順(環境変数・再デプロイ・戻し方)は
