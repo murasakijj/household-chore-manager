@@ -11,7 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:emulator": "firebase emulators:exec --project demo-household-chore-manager --only firestore \"vitest run --config vitest.emulator.config.ts\"",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "deploy:firestore": "tsx scripts/deploy-firestore-rules.ts",
+    "migrate:firebase": "tsx scripts/migrate-firebase/cli.ts"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
@@ -25,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -36,6 +39,7 @@
     "firebase-tools": "^15.31.0",
     "globals": "^17.7.0",
     "prettier": "^3.9.5",
+    "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.63.0",
     "vite": "^8.1.4",

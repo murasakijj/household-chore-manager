@@ -28,7 +28,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["api/**/*.ts"],
+    files: ["api/**/*.ts", "scripts/**/*.ts", "firebase/**/*.ts"],
     languageOptions: {
       globals: globals.node,
     },
