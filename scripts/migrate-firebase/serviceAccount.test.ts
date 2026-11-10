@@ -61,6 +61,19 @@ describe("readServiceAccount", () => {
     expect(m).toContain(".json.json");
   });
 
+  it("hints at stripped backslashes for a drive path without separators", () => {
+    const r = readServiceAccount(
+      "--old-service-account",
+      "C:keysrecipe-old-sa.json",
+    );
+    if (r.ok) throw new Error("expected failure");
+    const m = r.message;
+    expect(m).toContain("not found");
+    expect(m).toContain("backslashes");
+    expect(m).toContain("C:/keys/old-sa.json");
+    expect(m).not.toContain(".json.json");
+  });
+
   it("reports unreadable files with the error code only", () => {
     const m = failure(""); // the directory itself: EISDIR
     expect(m).toContain("could not read");

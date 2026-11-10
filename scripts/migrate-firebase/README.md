@@ -15,8 +15,9 @@
 実行前提: PR #3 をマージした後の main、またはこのブランチで実行する(未マージの main では
 `Missing script: migrate:firebase`)。初回は `npm install`(`tsx` が devDependency)。
 
-JSON はリポジトリの外(Windows 例 `C:\keys\old-sa.json`、macOS/Linux 例 `~/keys/old-sa.json`。
+JSON はリポジトリの外(Windows 例 `C:/keys/old-sa.json`、macOS/Linux 例 `~/keys/old-sa.json`。
 先頭の `~` はホームディレクトリに展開される)に置く(誤コミット防止に `*service-account*.json` / `*-sa.json` は `.gitignore` 済み)。作業後は削除すること。
+Windows でもパスは `/` 区切りで書く(npm のスクリプト実行シェルによっては `\` が消えるため)。
 
 ## 使い方
 
@@ -25,13 +26,13 @@ JSON はリポジトリの外(Windows 例 `C:\keys\old-sa.json`、macOS/Linux �
 1. dry-run(既定。件数と無料枠の見積もりだけ表示、書き込まない)
 
 ```
-npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json
+npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:/keys/old-sa.json --new-service-account C:/keys/new-sa.json
 ```
 
 2. 実書き込み(同じコマンドに `--execute` を付ける)
 
 ```
-npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json --execute
+npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:/keys/old-sa.json --new-service-account C:/keys/new-sa.json --execute
 ```
 
 macOS/Linux ではパスを `~/keys/old-sa.json` のように書いてもよい。`npm run ... -- --flag` の `--` は

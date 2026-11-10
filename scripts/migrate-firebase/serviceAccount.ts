@@ -36,6 +36,11 @@ export function readServiceAccount(
   } catch (e) {
     const code = (e as { code?: unknown }).code;
     if (code === "ENOENT") {
+      if (/^[A-Za-z]:[^\\/]/.test(path)) {
+        return fail(
+          "file not found. The backslashes in the Windows path may have been stripped by the shell. Write the path with `/` separators, like `C:/keys/old-sa.json`.",
+        );
+      }
       return fail(
         "file not found. Check the path. On Windows, hidden file extensions can make the real name `.json.json`; list the folder to confirm.",
       );

@@ -1,6 +1,6 @@
 /**
  * 使い方は README.md。例:
- *   npm run migrate:firebase -- --app recipe-buddy --email me@example.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json [--collections a,b] [--execute] [--overwrite]
+ *   npm run migrate:firebase -- --app recipe-buddy --email me@example.com --old-service-account C:/keys/old-sa.json --new-service-account C:/keys/new-sa.json [--collections a,b] [--execute] [--overwrite]
  * パス先頭の `~` はホームディレクトリに展開する。
  */
 import { cert, initializeApp } from "firebase-admin/app";

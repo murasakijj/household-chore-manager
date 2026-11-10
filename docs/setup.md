@@ -86,16 +86,17 @@ npm run deploy:firestore -- --project <プロジェクトID> --emails you@gmail.
 (旧・新それぞれのサービスアカウントJSONが必要)。既定は dry-run。
 
 前提は上のデプロイ手順と同じ(PR #3 マージ後の main またはこのブランチ、初回 `npm install`)。
-どのシェルでも動く1行形式で実行する(パスは Windows 例 `C:\keys\old-sa.json`、
+どのシェルでも動く1行形式で実行する(パスは Windows 例 `C:/keys/old-sa.json`、
 macOS/Linux 例 `/home/you/keys/old-sa.json`。先頭の `~` は展開される)。
+Windows でもパスは `/` 区切りで書く(npm のスクリプト実行シェルによっては `\` が消えるため)。
 
 ```
-npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json
+npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:/keys/old-sa.json --new-service-account C:/keys/new-sa.json
 ```
 
 上記は dry-run。実書き込みは同じコマンドの末尾に `--execute` を付ける。
 
-サービスアカウントJSONはリポジトリ外(例 `C:\keys\` や `~/keys/`)に置く。無料枠を超える見込みなら
+サービスアカウントJSONはリポジトリ外(例 `C:/keys/` や `~/keys/`)に置く。無料枠を超える見込みなら
 `--collections a,b` でコレクションを分けて日をまたいで実行する。
 
 **新 uid の確認(fridge-track のみ)**: 共有プロジェクトの Firebase Console →
