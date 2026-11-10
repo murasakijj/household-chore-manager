@@ -1,10 +1,8 @@
 /**
  * 使い方は README.md。例:
- *   npm run migrate:firebase -- --app recipe-buddy --email me@example.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json [--collections a,b] [--execute] [--overwrite]
+ *   npm run migrate:firebase -- --app recipe-buddy --email me@example.com --old-service-account C:/keys/old-sa.json --new-service-account C:/keys/new-sa.json [--collections a,b] [--execute] [--overwrite]
  * パス先頭の `~` はホームディレクトリに展開する。
  */
-import { readFileSync } from "node:fs";
-import { expandHome } from "../lib/paths.js";
 import { cert, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
@@ -14,46 +12,8 @@ import {
   MigrationAbort,
   type MigrationApp,
 } from "./copy.js";
-
-function parseArgs(argv: string[]) {
-  const v: Record<string, string> = {};
-  const flags = new Set<string>();
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--execute" || a === "--overwrite") flags.add(a);
-    else if (
-      [
-        "--app",
-        "--email",
-        "--old-service-account",
-        "--new-service-account",
-      ].includes(a)
-    ) {
-      v[a] = argv[++i] ?? "";
-    } else throw new Error(`Unknown argument: ${a}`);
-  }
-  return {
-    v,
-    execute: flags.has("--execute"),
-    overwrite: flags.has("--overwrite"),
-  };
-}
-
-function loadServiceAccount(path: string) {
-  // 失敗時は内容の断片を出さないよう、固定メッセージのみ表示する。
-  let json: { project_id?: unknown };
-  try {
-    json = JSON.parse(readFileSync(expandHome(path), "utf8"));
-  } catch {
-    throw new Error(
-      "Could not read or parse a service account JSON file (check the path and that it is the downloaded key file).",
-    );
-  }
-  if (typeof json?.project_id !== "string" || !json.project_id) {
-    throw new Error("A service account JSON file has no project_id.");
-  }
-  return json as { project_id: string };
-}
+import { parseArgs } from "./args.js";
+import { loadServiceAccounts } from "./serviceAccount.js";
 
 async function resolveUid(
   auth: ReturnType<typeof getAuth>,
@@ -109,8 +69,10 @@ async function main() {
       "Emulator environment variables are set; unset them to run against real projects.",
     );
   }
-  const oldSa = loadServiceAccount(v["--old-service-account"]);
-  const newSa = loadServiceAccount(v["--new-service-account"]);
+  const { oldSa, newSa } = loadServiceAccounts(
+    v["--old-service-account"],
+    v["--new-service-account"],
+  );
   if (oldSa.project_id === newSa.project_id) {
     throw new Error("Old and new service accounts belong to the same project.");
   }

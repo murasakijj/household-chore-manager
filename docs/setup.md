@@ -86,21 +86,27 @@ npm run deploy:firestore -- --project <プロジェクトID> --emails you@gmail.
 (旧・新それぞれのサービスアカウントJSONが必要)。既定は dry-run。
 
 前提は上のデプロイ手順と同じ(PR #3 マージ後の main またはこのブランチ、初回 `npm install`)。
-どのシェルでも動く1行形式で実行する(パスは Windows 例 `C:\keys\old-sa.json`、
+どのシェルでも動く1行形式で実行する(パスは Windows 例 `C:/keys/old-sa.json`、
 macOS/Linux 例 `/home/you/keys/old-sa.json`。先頭の `~` は展開される)。
+Windows でもパスは `/` 区切りで書く(npm のスクリプト実行シェルによっては `\` が消えるため)。
 
 ```
-npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:\keys\old-sa.json --new-service-account C:\keys\new-sa.json
+npm run migrate:firebase -- --app recipe-buddy --email you@gmail.com --old-service-account C:/keys/old-sa.json --new-service-account C:/keys/new-sa.json
 ```
 
 上記は dry-run。実書き込みは同じコマンドの末尾に `--execute` を付ける。
 
-サービスアカウントJSONはリポジトリ外(例 `C:\keys\` や `~/keys/`)に置く。無料枠を超える見込みなら
+サービスアカウントJSONはリポジトリ外(例 `C:/keys/` や `~/keys/`)に置く。無料枠を超える見込みなら
 `--collections a,b` でコレクションを分けて日をまたいで実行する。
 
 **新 uid の確認(fridge-track のみ)**: 共有プロジェクトの Firebase Console →
 Authentication → ユーザー の「User UID」が新 uid。fridge-track の Vercel 環境変数
 `INVENTORY_OWNER_UID` にこの値を設定する(スクリプトは uid を表示しない)。
+
+サービスアカウントJSONの読み込みに失敗したときは、旧・新それぞれのパスと理由が表示される。
+PowerShell では `Get-ChildItem C:\keys`(拡張子が隠れて `.json.json` になっていないか)、
+`Test-Path <パス>`、`(Get-Content <パス> -Raw | ConvertFrom-Json).project_id` で確認できる。
+メモ帳や `Out-File` で保存し直すと文字コードが UTF-16 に変わるため、キーは編集せずダウンロードし直す。
 
 詳細・オプション・注意点は
 [scripts/migrate-firebase/README.md](../scripts/migrate-firebase/README.md)。
